@@ -1,0 +1,34 @@
+name: runtime-container-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build runtime container
+        run: docker build --pull -t jadel-chatbot-runtime:${GITHUB_SHA} .
+      - name: Start and verify health
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name jadel-chatbot-test -p 18502:8501 -e OPENAI_API_KEY=dummy-ci-key jadel-chatbot-runtime:${GITHUB_SHA}
+          trap 'docker logs jadel-chatbot-test || true; docker rm -f jadel-chatbot-test || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18502/_stcore/health >/dev/null; then
+              echo 'CHATBOT_RUNTIME_HEALTH=PASS'
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'CHATBOT_RUNTIME_HEALTH=FAIL'
+          exit 1
