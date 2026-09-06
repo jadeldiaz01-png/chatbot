@@ -1,56 +1,63 @@
+import os
+
 import streamlit as st
 from openai import OpenAI
 
-# Show title and description.
-st.title("💬 Chatbot")
-st.write(
-    "This is a simple chatbot that uses OpenAI's GPT-3.5 model to generate responses. "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-    "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
-)
+MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
+API_KEY = os.getenv("OPENAI_API_KEY", "")
+MAX_INPUT_CHARS = 4000
+MAX_HISTORY_MESSAGES = 20
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
-else:
+SYSTEM_INSTRUCTIONS = """You are the Jadel Tech RD website assistant. Help visitors understand Jadel Tech RD services, scope work, and identify when a human should follow up. Do not claim that a service is production-ready, profitable, connected, or authorized unless the provided conversation establishes that fact. Never request passwords, API keys, private keys, payment credentials, recovery codes, or government identity documents. You have no tools and cannot publish content, place trades, submit marketplace proposals, charge money, change accounts, or make contractual commitments. For those actions, state that human approval is required."""
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
+st.set_page_config(page_title="Jadel Tech RD Assistant", page_icon="🤖")
+st.title("🤖 Jadel Tech RD Assistant")
+st.caption("Asistente informativo con acciones externas bloqueadas por diseño.")
 
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+if not API_KEY:
+    st.error("El asistente está temporalmente fuera de servicio por configuración del servidor.")
+    st.stop()
 
-    # Display the existing chat messages via `st.chat_message`.
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+client = OpenAI(api_key=API_KEY)
 
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
-    if prompt := st.chat_input("What is up?"):
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-        # Store and display the current prompt.
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-        # Generate a response using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
+if prompt := st.chat_input("¿En qué proyecto o servicio de Jadel Tech RD necesitas ayuda?"):
+    prompt = prompt.strip()
+    if not prompt:
+        st.stop()
+    if len(prompt) > MAX_INPUT_CHARS:
+        st.warning(f"El mensaje supera el límite de {MAX_INPUT_CHARS} caracteres.")
+        st.stop()
+
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.session_state.messages = st.session_state.messages[-MAX_HISTORY_MESSAGES:]
+
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    try:
+        response = client.responses.create(
+            model=MODEL,
+            instructions=SYSTEM_INSTRUCTIONS,
+            input=[
+                {"role": message["role"], "content": message["content"]}
+                for message in st.session_state.messages
             ],
-            stream=True,
         )
+        answer = (response.output_text or "").strip()
+        if not answer:
+            answer = "No pude generar una respuesta útil. Inténtalo nuevamente o solicita seguimiento humano."
+    except Exception:
+        answer = "El servicio de IA no está disponible temporalmente. No se realizó ninguna acción externa."
 
-        # Stream the response to the chat using `st.write_stream`, then store it in 
-        # session state.
-        with st.chat_message("assistant"):
-            response = st.write_stream(stream)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+    with st.chat_message("assistant"):
+        st.markdown(answer)
+
+    st.session_state.messages.append({"role": "assistant", "content": answer})
+    st.session_state.messages = st.session_state.messages[-MAX_HISTORY_MESSAGES:]
