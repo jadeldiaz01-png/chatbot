@@ -105,8 +105,10 @@
   "supply_chain": {
     "base_image_digest_pinned": true,
     "github_actions_sha_pinned": true,
+    "direct_dependencies_pinned": true,
+    "transitive_dependency_lock_with_hashes": false,
     "dependency_updates_automated": true,
-    "sbom_required_for_release": true,
+    "cyclonedx_sbom_required_for_release": true,
     "provenance_attestation_required_for_release": true,
     "vulnerability_audit_required": true
   },
@@ -123,6 +125,7 @@
   "production_status": "NOT_CERTIFIED",
   "blocking_evidence": [
     "exact_sha_ci_for_this_increment",
+    "hashed_transitive_dependency_lock",
     "model_quality_eval_baseline",
     "authenticated_edge_rate_limit_or_equivalent",
     "production_deployment_and_rollback_evidence",
