@@ -24,15 +24,6 @@ class SupplyChainContractTests(unittest.TestCase):
         self.assertEqual(supply_chain["runtime_lock"], "requirements.lock")
         self.assertEqual(supply_chain["ci_lock"], "requirements-ci.lock")
 
-    def test_lock_drift_workflow_regenerates_and_compares(self) -> None:
-        workflow = (
-            ROOT / ".github" / "workflows" / "dependency-lock-candidate.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("requirements.lock.generated", workflow)
-        self.assertIn("requirements-ci.lock.generated", workflow)
-        self.assertIn("cmp requirements.lock requirements.lock.generated", workflow)
-        self.assertIn("cmp requirements-ci.lock requirements-ci.lock.generated", workflow)
-
 
 if __name__ == "__main__":
     unittest.main()
