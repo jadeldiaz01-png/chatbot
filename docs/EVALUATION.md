@@ -8,7 +8,11 @@ These tests do **not** certify model quality.
 
 ## Repository-owned evaluation
 
-The versioned baseline is `evals/baseline.json`. `scripts/run_model_eval.py` records the exact Git SHA, model ID, prompt version, case-set SHA-256, latency, observed token usage and per-case results. The `model-eval` workflow is manual, uploads an immutable report, and never promotes a model automatically.
+The versioned baseline is `evals/baseline.json`. `scripts/run_model_eval.py` records the exact Git SHA, model ID, prompt version, case-set SHA-256, latency, observed token usage and per-case results.
+
+The `model-eval` workflow runs only from trusted `main` pushes that touch model-relevant files, or by explicit `workflow_dispatch`. It uses the protected `model-evaluation` environment, uploads an immutable report, and never promotes a model automatically. Pull requests do not receive this evaluation secret.
+
+Infrastructure/API exceptions are not model failures. The evaluator stops on the first API exception, records only safe diagnostic metadata, marks the run `NOT_ADJUDICATED_INFRASTRUCTURE`, and requires the infrastructure problem to be resolved before model-quality conclusions are drawn.
 
 This repository-owned harness avoids depending on the legacy OpenAI Evals platform, which is deprecated in 2026. Human review remains mandatory because keyword assertions cannot measure all dimensions of usefulness, tone, factuality or safety.
 
