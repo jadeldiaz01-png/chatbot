@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254
+FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -9,10 +9,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt \
-    && useradd --create-home --uid 10001 appuser
+RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-RUN chown -R appuser:appuser /app
+
+FROM base AS test
+COPY requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt \
+    && python -m compileall -q jadel_chatbot streamlit_app.py tests \
+    && ruff check . \
+    && python -m unittest discover -s tests -v \
+    && pip check \
+    && pip-audit -r requirements.txt
+
+FROM base AS runtime
+RUN useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app
 USER 10001:10001
 
 EXPOSE 8501
