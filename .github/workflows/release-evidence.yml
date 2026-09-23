@@ -1,0 +1,47 @@
+name: release-evidence
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Build verified runtime
+        run: |
+          set -euo pipefail
+          docker build --pull --target test -t jadel-chatbot-test:${GITHUB_SHA} .
+          docker build --pull --target runtime -t jadel-chatbot-runtime:${GITHUB_SHA} .
+      - name: Generate release evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          cp production-manifest.json evidence/
+          docker run --rm jadel-chatbot-runtime:${GITHUB_SHA} python -m pip list --format=json > evidence/python-sbom.json
+          docker inspect jadel-chatbot-runtime:${GITHUB_SHA} > evidence/container-inspect.json
+          sha256sum evidence/* > evidence/SHA256SUMS
+          tar -czf jadel-chatbot-evidence-${GITHUB_SHA}.tar.gz evidence
+      - name: Attest evidence bundle
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
+        with:
+          subject-path: jadel-chatbot-evidence-${{ github.sha }}.tar.gz
+      - name: Upload evidence bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: jadel-chatbot-evidence-${{ github.sha }}
+          path: jadel-chatbot-evidence-${{ github.sha }}.tar.gz
+          if-no-files-found: error
+          retention-days: 30
