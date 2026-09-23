@@ -1,0 +1,35 @@
+name: dependency-lock-candidate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  generate-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Generate Python 3.12 hash-locked dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${PWD}:/work" \
+            -w /work \
+            python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 \
+            sh -lc "python -m pip install --no-cache-dir pip-tools==7.6.1 && pip-compile --generate-hashes --strip-extras --no-emit-index-url --output-file requirements.lock requirements.txt"
+          test -s requirements.lock
+          grep -q -- '--hash=sha256:' requirements.lock
+      - name: Upload lock candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: requirements-lock-${{ github.sha }}
+          path: requirements.lock
+          if-no-files-found: error
+          retention-days: 3
