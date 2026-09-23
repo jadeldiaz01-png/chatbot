@@ -1,0 +1,66 @@
+name: model-eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Model ID to evaluate
+        required: true
+        default: gpt-5.6-luna
+        type: string
+      min_pass_rate:
+        description: Minimum automated pass rate (human review is still required)
+        required: true
+        default: '0.90'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: model-evaluation
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build evaluated runtime
+        run: docker build --pull --target runtime -t jadel-chatbot-eval:${GITHUB_SHA} .
+      - name: Run held-out model evaluation
+        id: eval
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ inputs.model }}
+          MIN_EVAL_PASS_RATE: ${{ inputs.min_pass_rate }}
+        run: |
+          set -u
+          if [ -z "${OPENAI_API_KEY}" ]; then
+            echo 'OPENAI_API_KEY is not configured for the model-evaluation environment' >&2
+            exit 2
+          fi
+          mkdir -p eval-results
+          set +e
+          docker run --name jadel-chatbot-model-eval \
+            -e OPENAI_API_KEY \
+            -e OPENAI_MODEL \
+            -e MIN_EVAL_PASS_RATE \
+            -e GITHUB_SHA \
+            jadel-chatbot-eval:${GITHUB_SHA} \
+            python scripts/run_model_eval.py --output /tmp/eval-report.json
+          eval_code=$?
+          set -e
+          docker cp jadel-chatbot-model-eval:/tmp/eval-report.json eval-results/report.json || true
+          docker rm -f jadel-chatbot-model-eval >/dev/null 2>&1 || true
+          exit ${eval_code}
+      - name: Upload immutable evaluation report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: model-eval-${{ github.sha }}-${{ inputs.model }}
+          path: eval-results/report.json
+          if-no-files-found: warn
+          retention-days: 30
