@@ -11,13 +11,18 @@ Production-oriented Streamlit assistant for Jadel Tech RD using the OpenAI Respo
 - Bounded input, history, output tokens, timeout and retries.
 - Session-level soft throttling.
 - Non-root container with healthcheck.
+- Linux/amd64 CPython 3.12 runtime and CI dependency graphs are versioned with SHA-256 hashes.
+- Docker production/CI installation uses `pip --require-hashes --only-binary=:all:`.
+- A read-only lock-drift workflow regenerates both graphs and fails on byte differences.
 - Policy/config/manifest tests, Ruff and dependency audit in CI.
-- Release-evidence workflow with SHA-pinned GitHub Actions and provenance attestation.
+- Release-evidence workflow with SHA-pinned GitHub Actions, CycloneDX SBOM and provenance/SBOM attestation.
 - Advanced capabilities are fail-closed: multimodal is implemented behind a disabled feature flag; RAG, ML/DL and autonomous tools require explicit evidence gates.
 
 The canonical machine-readable state is [`production-manifest.json`](production-manifest.json). `production_status` remains `NOT_CERTIFIED` until the blocking evidence in that manifest exists for an exact commit SHA.
 
 ## Local run
+
+For ordinary cross-platform development, install the direct requirements:
 
 ```bash
 python -m venv .venv
@@ -26,6 +31,8 @@ pip install -r requirements.txt
 export OPENAI_API_KEY='set-this-in-your-shell-or-secret-manager'
 streamlit run streamlit_app.py
 ```
+
+The committed `requirements.lock` and `requirements-ci.lock` are intentionally platform-specific production locks for Linux/amd64 CPython 3.12 and are enforced by the container/CI path.
 
 Do not commit `.env`, API keys or other credentials.
 
