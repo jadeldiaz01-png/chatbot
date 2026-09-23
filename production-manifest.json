@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "system": "jadel-chatbot",
   "repository": "jadeldiaz01-png/chatbot",
   "baseline_sha": "27d6c202905d73dd417c38c75c083ade5ae26278",
@@ -19,7 +19,8 @@
     "moderation": {
       "enabled": true,
       "model": "omni-moderation-latest",
-      "input_and_output": true
+      "input_and_output": true,
+      "multimodal_input_when_enabled": true
     },
     "limits": {
       "max_input_chars": 4000,
@@ -28,6 +29,13 @@
       "request_timeout_seconds": 30,
       "max_retries": 2,
       "session_requests_per_minute": 10
+    },
+    "evaluation": {
+      "case_set": "evals/baseline.json",
+      "runner": "scripts/run_model_eval.py",
+      "workflow": ".github/workflows/model-eval.yml",
+      "automatic_promotion_allowed": false,
+      "human_review_required": true
     }
   },
   "capabilities": {
@@ -112,12 +120,19 @@
     "provenance_attestation_required_for_release": true,
     "vulnerability_audit_required": true
   },
+  "repository_governance": {
+    "pull_request_required_for_production": true,
+    "exact_sha_status_check_required": true,
+    "human_approval_required": true,
+    "ruleset_enforcement_required": true
+  },
   "release_gates": {
     "unit_tests": "required",
     "policy_tests": "required",
     "container_health": "required",
     "dependency_audit": "required",
     "exact_sha_ci": "required",
+    "repository_ruleset": "required",
     "model_quality_eval": "required_before_model_change",
     "human_review": "required",
     "human_merge_approval": "required"
@@ -125,6 +140,7 @@
   "production_status": "NOT_CERTIFIED",
   "blocking_evidence": [
     "exact_sha_ci_for_this_increment",
+    "repository_ruleset_enforcement",
     "hashed_transitive_dependency_lock",
     "model_quality_eval_baseline",
     "authenticated_edge_rate_limit_or_equivalent",
