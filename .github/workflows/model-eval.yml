@@ -1,12 +1,17 @@
 name: model-eval
 
 on:
-  pull_request:
+  push:
     branches: [main]
     paths:
       - '.github/workflows/model-eval.yml'
+      - 'jadel_chatbot/**'
       - 'scripts/run_model_eval.py'
       - 'evals/baseline.json'
+      - 'streamlit_app.py'
+      - 'production-manifest.json'
+      - 'Dockerfile'
+      - 'requirements.lock'
   workflow_dispatch:
     inputs:
       model:
@@ -23,13 +28,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: model-eval-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   evaluate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: model-evaluation
     env:
-      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      SOURCE_SHA: ${{ github.sha }}
       EVAL_MODEL: ${{ inputs.model || 'gpt-5.6-luna' }}
       EVAL_MIN_PASS_RATE: ${{ inputs.min_pass_rate || '0.90' }}
     steps:
