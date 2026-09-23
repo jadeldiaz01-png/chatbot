@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import base64
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 
 @dataclass(frozen=True)
@@ -12,7 +12,7 @@ class RedactionResult:
     detected_types: tuple[str, ...]
 
 
-_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+_PATTERN_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "private_key",
         re.compile(
@@ -40,10 +40,10 @@ _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 def redact_likely_secrets(text: str) -> RedactionResult:
     redacted = text
     detected: list[str] = []
-    for secret_type, pattern in _SECRET_PATTERNS:
+    for rule_name, pattern in _PATTERN_RULES:
         if pattern.search(redacted):
-            detected.append(secret_type)
-            if secret_type == "generic_secret_assignment":
+            detected.append(rule_name)
+            if rule_name == "generic_secret_assignment":
                 redacted = pattern.sub(lambda m: f"{m.group(1)}=[REDACTED]", redacted)
             else:
                 redacted = pattern.sub("[REDACTED]", redacted)
