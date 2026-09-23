@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.0",
+  "system": "jadel-chatbot",
+  "repository": "jadeldiaz01-png/chatbot",
+  "baseline_sha": "27d6c202905d73dd417c38c75c083ade5ae26278",
+  "adjudication_date": "2026-09-23",
+  "runtime": {
+    "interface": "streamlit",
+    "container_user": "10001:10001",
+    "health_endpoint": "/_stcore/health",
+    "external_actions_enabled": false
+  },
+  "ai": {
+    "provider": "openai",
+    "api": "responses",
+    "production_model": "gpt-5.6-luna",
+    "candidate_models_requiring_eval": ["gpt-6-luna", "gpt-6-sol"],
+    "response_store": false,
+    "moderation": {
+      "enabled": true,
+      "model": "omni-moderation-latest",
+      "input_and_output": true
+    },
+    "limits": {
+      "max_input_chars": 4000,
+      "max_history_messages": 20,
+      "max_output_tokens": 800,
+      "request_timeout_seconds": 30,
+      "max_retries": 2,
+      "session_requests_per_minute": 10
+    }
+  },
+  "capabilities": {
+    "text_llm": {
+      "state": "enabled",
+      "authority": "advisory_only"
+    },
+    "multimodal_image_input": {
+      "state": "gated",
+      "default_enabled": false,
+      "required_evidence": [
+        "privacy_review",
+        "image_eval",
+        "moderation_eval",
+        "cost_eval"
+      ]
+    },
+    "rag": {
+      "state": "gated",
+      "default_enabled": false,
+      "required_evidence": [
+        "trusted_corpus",
+        "document_lineage",
+        "retrieval_eval",
+        "prompt_injection_eval"
+      ]
+    },
+    "ml_ranking": {
+      "state": "research_only",
+      "default_enabled": false,
+      "required_evidence": [
+        "labeled_dataset",
+        "train_validation_split",
+        "offline_metrics",
+        "bias_review"
+      ]
+    },
+    "deep_learning_or_finetuning": {
+      "state": "research_only",
+      "default_enabled": false,
+      "required_evidence": [
+        "baseline_comparison",
+        "held_out_eval",
+        "data_rights_review",
+        "rollback_plan"
+      ]
+    },
+    "autonomous_tools": {
+      "state": "disabled",
+      "default_enabled": false,
+      "write_actions": false,
+      "required_evidence": [
+        "tool_allowlist",
+        "structured_io",
+        "prompt_injection_eval",
+        "human_approval",
+        "audit_log"
+      ]
+    }
+  },
+  "privacy": {
+    "log_prompt_content": false,
+    "log_response_content": false,
+    "redact_likely_credentials": true,
+    "server_side_api_key_only": true,
+    "authentication_required_before_public_scale": true
+  },
+  "sre": {
+    "target_availability": 0.995,
+    "target_p95_seconds": 8,
+    "error_budget_policy_required": true,
+    "healthcheck_required": true,
+    "rollback_required": true
+  },
+  "supply_chain": {
+    "base_image_digest_pinned": true,
+    "github_actions_sha_pinned": true,
+    "dependency_updates_automated": true,
+    "sbom_required_for_release": true,
+    "provenance_attestation_required_for_release": true,
+    "vulnerability_audit_required": true
+  },
+  "release_gates": {
+    "unit_tests": "required",
+    "policy_tests": "required",
+    "container_health": "required",
+    "dependency_audit": "required",
+    "exact_sha_ci": "required",
+    "model_quality_eval": "required_before_model_change",
+    "human_review": "required",
+    "human_merge_approval": "required"
+  },
+  "production_status": "NOT_CERTIFIED",
+  "blocking_evidence": [
+    "exact_sha_ci_for_this_increment",
+    "model_quality_eval_baseline",
+    "authenticated_edge_rate_limit_or_equivalent",
+    "production_deployment_and_rollback_evidence",
+    "release_sbom_and_provenance"
+  ]
+}
