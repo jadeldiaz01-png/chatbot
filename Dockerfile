@@ -8,18 +8,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     STREAMLIT_SERVER_PORT=8501
 
 WORKDIR /app
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock ./
+RUN python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
 COPY . .
 
 FROM base AS test
-COPY requirements-dev.txt ./
-RUN pip install --no-cache-dir -r requirements-dev.txt \
-    && python -m compileall -q jadel_chatbot streamlit_app.py tests \
+COPY requirements-ci.lock ./
+RUN python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements-ci.lock \
+    && python -m compileall -q jadel_chatbot streamlit_app.py tests scripts \
     && ruff check . \
     && python -m unittest discover -s tests -v \
-    && pip check \
-    && pip-audit -r requirements.txt
+    && python -m pip check \
+    && pip-audit -r requirements.lock
 
 FROM base AS runtime
 RUN useradd --create-home --uid 10001 appuser \
