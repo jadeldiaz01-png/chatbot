@@ -28,12 +28,30 @@ class AIService:
             max_retries=config.max_retries,
         )
 
-    def _is_flagged(self, text: str) -> bool:
-        if not self.config.moderation_enabled or not text.strip():
+    def _is_flagged(self, text: str, image_data_url: str | None = None) -> bool:
+        if not self.config.moderation_enabled:
             return False
+
+        moderation_input: str | list[dict[str, Any]]
+        if image_data_url is None:
+            if not text.strip():
+                return False
+            moderation_input = text
+        else:
+            items: list[dict[str, Any]] = []
+            if text.strip():
+                items.append({"type": "text", "text": text})
+            items.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_data_url},
+                }
+            )
+            moderation_input = items
+
         result = self.client.moderations.create(
             model=self.config.moderation_model,
-            input=text,
+            input=moderation_input,
         )
         return bool(result.results and result.results[0].flagged)
 
@@ -63,7 +81,10 @@ class AIService:
         current_user_text: str,
         image_data_url: str | None = None,
     ) -> GenerationResult:
-        if self._is_flagged(current_user_text):
+        if image_data_url is not None and not self.config.multimodal_enabled:
+            raise ValueError("multimodal capability is disabled")
+
+        if self._is_flagged(current_user_text, image_data_url):
             return GenerationResult(
                 "No puedo procesar ese contenido tal como está. "
                 "Puedes reformular la solicitud de forma segura.",
@@ -71,10 +92,8 @@ class AIService:
             )
 
         request_input: list[dict[str, Any]] = [dict(item) for item in messages]
-        if image_data_url is not None:
-            if not self.config.multimodal_enabled:
-                raise ValueError("multimodal capability is disabled")
-            if request_input and request_input[-1].get("role") == "user":
+        if image_data_url is not None and request_input:
+            if request_input[-1].get("role") == "user":
                 request_input[-1] = {
                     "role": "user",
                     "content": [
