@@ -36,6 +36,31 @@ def contains_none(text: str, terms: list[str]) -> bool:
     return all(term.casefold() not in normalized for term in terms)
 
 
+def safe_error_metadata(exc: Exception) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"error_type": type(exc).__name__}
+
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        metadata["status_code"] = status_code
+
+    request_id = getattr(exc, "request_id", None)
+    if isinstance(request_id, str) and request_id:
+        metadata["request_id"] = request_id
+
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        remote_error = body.get("error", body)
+        if isinstance(remote_error, dict):
+            code = remote_error.get("code")
+            remote_type = remote_error.get("type")
+            if isinstance(code, str) and code:
+                metadata["remote_error_code"] = code
+            if isinstance(remote_type, str) and remote_type:
+                metadata["remote_error_type"] = remote_type
+
+    return metadata
+
+
 def evaluate_case(service: AIService, case: dict[str, Any]) -> dict[str, Any]:
     raw_input = str(case["input"])
     redaction = redact_likely_secrets(raw_input)
@@ -55,6 +80,7 @@ def evaluate_case(service: AIService, case: dict[str, Any]) -> dict[str, Any]:
             "id": case["id"],
             "category": case["category"],
             "critical": bool(case.get("critical", False)),
+            "status": "completed",
             "passed": passed,
             "required_any_ok": required_ok,
             "forbidden_terms_ok": forbidden_ok,
@@ -74,11 +100,12 @@ def evaluate_case(service: AIService, case: dict[str, Any]) -> dict[str, Any]:
             "id": case["id"],
             "category": case["category"],
             "critical": bool(case.get("critical", False)),
-            "passed": False,
+            "status": "infrastructure_error",
+            "passed": None,
             "human_review": True,
             "redaction_detected_types": list(redaction.detected_types),
             "latency_seconds": round(time.perf_counter() - started, 4),
-            "error_type": type(exc).__name__,
+            **safe_error_metadata(exc),
         }
 
 
@@ -112,23 +139,42 @@ def main() -> int:
         return 2
 
     service = AIService(config)
-    results = [evaluate_case(service, case) for case in cases]
+    results: list[dict[str, Any]] = []
+    for case in cases:
+        item = evaluate_case(service, case)
+        results.append(item)
+        if item["status"] == "infrastructure_error":
+            break
 
-    total = len(results)
-    passed = sum(1 for item in results if item["passed"])
+    completed = [item for item in results if item["status"] == "completed"]
+    infrastructure_failures = [
+        item for item in results if item["status"] == "infrastructure_error"
+    ]
+    passed = sum(1 for item in completed if item["passed"] is True)
+    failed = sum(1 for item in completed if item["passed"] is False)
     critical_failures = [
-        item["id"] for item in results if item["critical"] and not item["passed"]
+        item["id"]
+        for item in completed
+        if item["critical"] and item["passed"] is False
     ]
     latencies = [float(item["latency_seconds"]) for item in results]
     token_totals = [
         int(item["total_tokens"])
-        for item in results
+        for item in completed
         if isinstance(item.get("total_tokens"), int)
     ]
-    pass_rate = passed / total if total else 0.0
+    adjudicated = len(completed)
+    pass_rate = passed / adjudicated if adjudicated else None
+
+    if infrastructure_failures:
+        evaluation_status = "NOT_ADJUDICATED_INFRASTRUCTURE"
+    elif critical_failures or pass_rate is None or pass_rate < args.min_pass_rate:
+        evaluation_status = "FAIL"
+    else:
+        evaluation_status = "PASS"
 
     report = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "created_at": datetime.now(UTC).isoformat(),
         "git_sha": os.getenv("GITHUB_SHA", "local"),
         "model": config.model,
@@ -136,12 +182,30 @@ def main() -> int:
         "case_set_sha256": hashlib.sha256(raw_cases).hexdigest(),
         "human_review_required": True,
         "automatic_promotion_allowed": False,
+        "evaluation_status": evaluation_status,
         "summary": {
-            "total": total,
+            "planned_total": len(cases),
+            "executed": len(results),
+            "adjudicated": adjudicated,
             "passed": passed,
-            "failed": total - passed,
-            "pass_rate": round(pass_rate, 4),
+            "failed": failed,
+            "pass_rate": round(pass_rate, 4) if pass_rate is not None else None,
             "critical_failures": critical_failures,
+            "infrastructure_failures": [
+                {
+                    key: item[key]
+                    for key in (
+                        "id",
+                        "error_type",
+                        "status_code",
+                        "request_id",
+                        "remote_error_code",
+                        "remote_error_type",
+                    )
+                    if key in item
+                }
+                for item in infrastructure_failures
+            ],
             "p95_latency_seconds": percentile(latencies, 0.95),
             "total_tokens_observed": sum(token_totals) if token_totals else None,
             "min_pass_rate": args.min_pass_rate,
@@ -157,7 +221,9 @@ def main() -> int:
     )
     print(json.dumps(report["summary"], sort_keys=True))
 
-    if critical_failures or pass_rate < args.min_pass_rate:
+    if infrastructure_failures:
+        return 2
+    if critical_failures or pass_rate is None or pass_rate < args.min_pass_rate:
         return 1
     return 0
 
