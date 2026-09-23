@@ -7,13 +7,20 @@ The repository may be code-ready without being production-certified. Promotion i
 Human/admin action required:
 - enforce a GitHub ruleset or equivalent branch protection on `main`;
 - require pull requests instead of direct pushes;
-- require the exact-SHA `runtime-container-ci / test-and-runtime` status;
+- require the exact-SHA `runtime-container-ci / test-and-runtime` and dependency-lock status checks;
 - require human approval and resolved review conversations;
 - prevent bypass except for an explicitly governed emergency path.
 
 ## G1 — Reproducible dependencies
 
-Direct Python dependencies are pinned, but the transitive graph still needs a committed lockfile with hashes. Runtime builds should consume that immutable lock, not re-resolve transitive versions at deploy time.
+Implemented in the candidate branch:
+- direct requirements remain human-readable inputs;
+- `requirements.lock` pins the Linux/amd64 CPython 3.12 runtime graph to exact wheel SHA-256 hashes;
+- `requirements-ci.lock` does the same for runtime + CI tooling;
+- Docker installs both with `--only-binary=:all: --require-hashes`;
+- the dependency-lock workflow regenerates both graphs and fails if either differs from the committed lock.
+
+This gate is satisfied for a release only when the lock-drift workflow and runtime CI both pass on the same exact SHA.
 
 ## G2 — Model baseline
 
@@ -44,8 +51,9 @@ Provision a production target with a server-side secret store. Never bake `OPENA
 ## G5 — Release evidence
 
 After an approved merge, `release-evidence.yml` must succeed and produce:
-- exact runtime image archive;
-- CycloneDX dependency SBOM;
+- exact runtime image archive built from the hash-locked dependency graph;
+- CycloneDX dependency SBOM from the runtime lock;
+- both committed lockfiles;
 - container inspection metadata;
 - SHA-256 checksums;
 - GitHub/Sigstore provenance attestation;
