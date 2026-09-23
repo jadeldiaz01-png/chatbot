@@ -49,7 +49,7 @@ class AppConfig:
     max_image_bytes: int
 
     @classmethod
-    def from_env(cls) -> "AppConfig":
+    def from_env(cls) -> AppConfig:
         return cls(
             api_key=os.getenv("OPENAI_API_KEY", "").strip(),
             model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna").strip(),
