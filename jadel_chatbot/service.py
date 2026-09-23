@@ -17,6 +17,11 @@ logger = logging.getLogger("jadel_chatbot")
 class GenerationResult:
     text: str
     blocked_by_moderation: bool = False
+    response_id: str | None = None
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 class AIService:
@@ -60,19 +65,30 @@ class AIService:
         value = getattr(usage, name, None)
         return value if isinstance(value, int) else None
 
-    def _log_response_metadata(self, response: Any) -> None:
+    def _response_metadata(self, response: Any) -> dict[str, Any]:
         usage = getattr(response, "usage", None)
-        payload = {
-            "event": "llm_response",
+        return {
             "response_id": getattr(response, "id", None),
             "model": getattr(response, "model", self.config.model),
-            "prompt_version": PROMPT_VERSION,
             "input_tokens": self._usage_value(usage, "input_tokens"),
             "output_tokens": self._usage_value(usage, "output_tokens"),
             "total_tokens": self._usage_value(usage, "total_tokens"),
-            "store": self.config.response_store,
         }
-        logger.info(json.dumps(payload, sort_keys=True))
+
+    def _log_response_metadata(self, response: Any) -> dict[str, Any]:
+        metadata = self._response_metadata(response)
+        logger.info(
+            json.dumps(
+                {
+                    "event": "llm_response",
+                    "prompt_version": PROMPT_VERSION,
+                    "store": self.config.response_store,
+                    **metadata,
+                },
+                sort_keys=True,
+            )
+        )
+        return metadata
 
     def generate(
         self,
@@ -109,7 +125,7 @@ class AIService:
             max_output_tokens=self.config.max_output_tokens,
             store=self.config.response_store,
         )
-        self._log_response_metadata(response)
+        metadata = self._log_response_metadata(response)
 
         answer = (response.output_text or "").strip()
         if not answer:
@@ -123,5 +139,6 @@ class AIService:
                 "La respuesta generada fue retenida por los controles de seguridad. "
                 "Solicita seguimiento humano si necesitas ayuda.",
                 blocked_by_moderation=True,
+                **metadata,
             )
-        return GenerationResult(answer)
+        return GenerationResult(answer, **metadata)
