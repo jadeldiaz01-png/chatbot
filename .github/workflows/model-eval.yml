@@ -26,20 +26,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: model-evaluation
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      EVAL_MODEL: ${{ inputs.model || 'gpt-5.6-luna' }}
+      EVAL_MIN_PASS_RATE: ${{ inputs.min_pass_rate || '0.90' }}
     steps:
-      - name: Checkout immutable revision
+      - name: Checkout exact source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ env.SOURCE_SHA }}
           persist-credentials: false
+      - name: Verify checked-out SHA
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
       - name: Build evaluated runtime
-        run: docker build --pull --target runtime -t jadel-chatbot-eval:${GITHUB_SHA} .
+        run: docker build --pull --target runtime -t jadel-chatbot-eval:${SOURCE_SHA} .
       - name: Run held-out model evaluation
         id: eval
         shell: bash
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ inputs.model || 'gpt-5.6-luna' }}
-          MIN_EVAL_PASS_RATE: ${{ inputs.min_pass_rate || '0.90' }}
+          OPENAI_MODEL: ${{ env.EVAL_MODEL }}
+          MIN_EVAL_PASS_RATE: ${{ env.EVAL_MIN_PASS_RATE }}
         run: |
           set -u
           if [ -z "${OPENAI_API_KEY}" ]; then
@@ -52,9 +60,9 @@ jobs:
             -e OPENAI_API_KEY \
             -e OPENAI_MODEL \
             -e MIN_EVAL_PASS_RATE \
-            -e GITHUB_SHA \
-            jadel-chatbot-eval:${GITHUB_SHA} \
-            python scripts/run_model_eval.py --output /tmp/eval-report.json
+            -e GITHUB_SHA="${SOURCE_SHA}" \
+            jadel-chatbot-eval:${SOURCE_SHA} \
+            python -m scripts.run_model_eval --output /tmp/eval-report.json
           eval_code=$?
           set -e
           docker cp jadel-chatbot-model-eval:/tmp/eval-report.json eval-results/report.json || true
@@ -64,7 +72,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: model-eval-${{ github.sha }}-${{ inputs.model || 'gpt-5.6-luna' }}
+          name: model-eval-${{ env.SOURCE_SHA }}-${{ env.EVAL_MODEL }}
           path: eval-results/report.json
           if-no-files-found: warn
           retention-days: 30
