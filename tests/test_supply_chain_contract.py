@@ -1,9 +1,9 @@
 import json
-import pathlib
 import unittest
+from pathlib import Path
 
 
-ROOT = pathlib.Path(__file__).parents[1]
+ROOT = Path(__file__).parents[1]
 
 
 class SupplyChainContractTests(unittest.TestCase):
