@@ -12,26 +12,35 @@ jobs:
   test-and-runtime:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - name: Checkout immutable revision
+      - name: Checkout exact source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ env.SOURCE_SHA }}
           persist-credentials: false
+      - name: Verify checked-out SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          echo "SOURCE_SHA=${SOURCE_SHA}"
       - name: Build test target and run policy/security checks
-        run: docker build --pull --target test -t jadel-chatbot-test:${GITHUB_SHA} .
+        run: docker build --pull --target test -t jadel-chatbot-test:${SOURCE_SHA} .
       - name: Build runtime container
-        run: docker build --pull --target runtime -t jadel-chatbot-runtime:${GITHUB_SHA} .
+        run: docker build --pull --target runtime -t jadel-chatbot-runtime:${SOURCE_SHA} .
       - name: Verify non-root runtime contract
         shell: bash
         run: |
           set -euo pipefail
-          test "$(docker inspect --format '{{.Config.User}}' jadel-chatbot-runtime:${GITHUB_SHA})" = "10001:10001"
-          docker inspect --format '{{json .Config.Healthcheck}}' jadel-chatbot-runtime:${GITHUB_SHA} | grep -q '_stcore/health'
+          test "$(docker inspect --format '{{.Config.User}}' jadel-chatbot-runtime:${SOURCE_SHA})" = "10001:10001"
+          docker inspect --format '{{json .Config.Healthcheck}}' jadel-chatbot-runtime:${SOURCE_SHA} | grep -q '_stcore/health'
       - name: Start and verify health
         shell: bash
         run: |
           set -euo pipefail
-          docker run -d --name jadel-chatbot-test-runtime -p 18502:8501 -e OPENAI_API_KEY=dummy-ci-key jadel-chatbot-runtime:${GITHUB_SHA}
+          docker run -d --name jadel-chatbot-test-runtime -p 18502:8501 -e OPENAI_API_KEY=dummy-ci-key jadel-chatbot-runtime:${SOURCE_SHA}
           trap 'docker logs jadel-chatbot-test-runtime || true; docker rm -f jadel-chatbot-test-runtime || true' EXIT
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:18502/_stcore/health >/dev/null; then
