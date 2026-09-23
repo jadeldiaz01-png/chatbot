@@ -23,7 +23,7 @@ jobs:
             -v "${PWD}:/work" \
             -w /work \
             python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 \
-            sh -lc 'set -euo pipefail; python -m pip install --no-cache-dir pip-tools==7.6.1; pip-compile --strip-extras --no-emit-index-url --output-file /tmp/resolved.txt requirements.txt; mkdir -p /tmp/wheels; python -m pip download --only-binary=:all: --dest /tmp/wheels -r /tmp/resolved.txt; python scripts/build_platform_lock.py --wheels /tmp/wheels --output requirements.lock'
+            sh -lc 'set -eu; python -m pip install --no-cache-dir pip-tools==7.6.1; pip-compile --strip-extras --no-emit-index-url --output-file /tmp/resolved.txt requirements.txt; mkdir -p /tmp/wheels; python -m pip download --only-binary=:all: --dest /tmp/wheels -r /tmp/resolved.txt; python scripts/build_platform_lock.py --wheels /tmp/wheels --output requirements.lock'
           test -s requirements.lock
           grep -q -- '--hash=sha256:' requirements.lock
       - name: Verify lock in a clean production base
