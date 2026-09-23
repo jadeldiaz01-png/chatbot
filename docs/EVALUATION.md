@@ -2,13 +2,19 @@
 
 ## Current evidence
 
-CI can establish deterministic properties: configuration fails closed, credentials are redacted, multimodal is disabled by default, autonomous write actions are disabled, the container runs as a non-root user, dependencies pass audit, and the Streamlit health endpoint responds.
+CI establishes deterministic properties: configuration fails closed, credentials are redacted, multimodal is disabled by default, autonomous write actions are disabled, the container runs as a non-root user, dependencies pass audit, and the Streamlit health endpoint responds.
 
 These tests do **not** certify model quality.
 
+## Repository-owned evaluation
+
+The versioned baseline is `evals/baseline.json`. `scripts/run_model_eval.py` records the exact Git SHA, model ID, prompt version, case-set SHA-256, latency, observed token usage and per-case results. The `model-eval` workflow is manual, uploads an immutable report, and never promotes a model automatically.
+
+This repository-owned harness avoids depending on the legacy OpenAI Evals platform, which is deprecated in 2026. Human review remains mandatory because keyword assertions cannot measure all dimensions of usefulness, tone, factuality or safety.
+
 ## Model-quality gate
 
-Before changing the production model or enabling RAG, multimodal or tools, create a versioned held-out dataset covering:
+Before changing the production model or enabling RAG, multimodal or tools, the held-out set must cover:
 
 - service discovery and scope clarification;
 - uncertainty and refusal to invent production/revenue claims;
@@ -32,4 +38,4 @@ Each case should have machine-checkable criteria where possible and human review
 - moderation block rate with sampled human review.
 - regression count versus the production baseline.
 
-Promotion requires exact dataset version, exact code SHA, exact model ID, evaluator version and an immutable result artifact.
+Promotion requires exact dataset version, exact code SHA, exact model ID, evaluator version, immutable result artifact and explicit human approval.
