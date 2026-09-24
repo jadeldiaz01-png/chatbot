@@ -18,6 +18,8 @@ API_BASE_URL = "https://integrate.api.nvidia.com/v1"
 ULTRA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 SAFETY_MODEL = "nvidia/nemotron-3.5-content-safety"
 REQUEST_ID_HEADERS = ("x-request-id", "x-nvidia-request-id", "request-id")
+REQUEST_TIMEOUT_SECONDS = 15.0
+MAX_RETRIES = 0
 
 
 def percentile(values: list[float], p: float) -> float | None:
@@ -205,7 +207,12 @@ def run_probe_call(
         }
 
 
-def summarize(results: list[dict[str, Any]], kind: str, slo_seconds: float) -> dict[str, Any]:
+def summarize(
+    results: list[dict[str, Any]],
+    kind: str,
+    slo_seconds: float,
+    planned: int,
+) -> dict[str, Any]:
     items = [item for item in results if item["kind"] == kind]
     completed = [item for item in items if item["status"] == "completed"]
     errors = [item for item in items if item["status"] != "completed"]
@@ -238,7 +245,7 @@ def summarize(results: list[dict[str, Any]], kind: str, slo_seconds: float) -> d
 
     return {
         "model": items[0]["model"] if items else None,
-        "planned": len(items),
+        "planned": planned,
         "completed": len(completed),
         "errors": len(errors),
         "response_headers_seconds": {
@@ -276,6 +283,43 @@ def summarize(results: list[dict[str, Any]], kind: str, slo_seconds: float) -> d
     }
 
 
+def build_report(
+    results: list[dict[str, Any]],
+    *,
+    repetitions: int,
+    slo_seconds: float,
+    complete: bool,
+) -> dict[str, Any]:
+    return {
+        "schema_version": PROBE_SCHEMA_VERSION,
+        "probe_spec_version": PROBE_SPEC_VERSION,
+        "created_at": datetime.now(UTC).isoformat(),
+        "git_sha": os.getenv("GITHUB_SHA", "local"),
+        "provider": "nvidia_nim",
+        "api_base_url": API_BASE_URL,
+        "repetitions_per_model": repetitions,
+        "execution_mode": "sequential_alternating",
+        "quality_evaluation": False,
+        "complete": complete,
+        "configured_timeout_seconds": REQUEST_TIMEOUT_SECONDS,
+        "configured_max_retries": MAX_RETRIES,
+        "slo_seconds": slo_seconds,
+        "summary": {
+            "ultra": summarize(results, "ultra", slo_seconds, repetitions),
+            "safety": summarize(results, "safety", slo_seconds, repetitions),
+        },
+        "results": results,
+    }
+
+
+def write_report(path: Path, report: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repetitions", type=int, default=10)
@@ -288,8 +332,8 @@ def main() -> int:
     args = parse_args()
     if not 3 <= args.repetitions <= 20:
         raise ValueError("--repetitions must be between 3 and 20")
-    if args.slo_seconds <= 0:
-        raise ValueError("--slo-seconds must be positive")
+    if not math.isfinite(args.slo_seconds) or args.slo_seconds <= 0:
+        raise ValueError("--slo-seconds must be finite and positive")
 
     api_key = os.getenv("NVIDIA_API_KEY", "").strip()
     if not api_key:
@@ -306,12 +350,23 @@ def main() -> int:
     client = OpenAI(
         base_url=API_BASE_URL,
         api_key=api_key,
-        timeout=45.0,
-        max_retries=2,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        max_retries=MAX_RETRIES,
         http_client=http_client,
     )
 
+    output_path = Path(args.output)
     results: list[dict[str, Any]] = []
+    write_report(
+        output_path,
+        build_report(
+            results,
+            repetitions=args.repetitions,
+            slo_seconds=args.slo_seconds,
+            complete=False,
+        ),
+    )
+
     for round_number in range(1, args.repetitions + 1):
         # Alternate model probes within each round to reduce time-drift bias.
         for kind in ("ultra", "safety"):
@@ -322,31 +377,23 @@ def main() -> int:
                 round_number=round_number,
             )
             results.append(result)
+            write_report(
+                output_path,
+                build_report(
+                    results,
+                    repetitions=args.repetitions,
+                    slo_seconds=args.slo_seconds,
+                    complete=False,
+                ),
+            )
 
-    report = {
-        "schema_version": PROBE_SCHEMA_VERSION,
-        "probe_spec_version": PROBE_SPEC_VERSION,
-        "created_at": datetime.now(UTC).isoformat(),
-        "git_sha": os.getenv("GITHUB_SHA", "local"),
-        "provider": "nvidia_nim",
-        "api_base_url": API_BASE_URL,
-        "repetitions_per_model": args.repetitions,
-        "execution_mode": "sequential_alternating",
-        "quality_evaluation": False,
-        "slo_seconds": args.slo_seconds,
-        "summary": {
-            "ultra": summarize(results, "ultra", args.slo_seconds),
-            "safety": summarize(results, "safety", args.slo_seconds),
-        },
-        "results": results,
-    }
-
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    report = build_report(
+        results,
+        repetitions=args.repetitions,
+        slo_seconds=args.slo_seconds,
+        complete=True,
     )
+    write_report(output_path, report)
 
     concise = {
         key: {
