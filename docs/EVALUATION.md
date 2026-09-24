@@ -2,19 +2,25 @@
 
 ## Current evidence
 
-CI establishes deterministic properties: configuration fails closed, credentials are redacted, multimodal is disabled by default, autonomous write actions are disabled, the container runs as a non-root user, dependencies pass audit, and the Streamlit health endpoint responds.
+CI establishes deterministic properties: configuration fails closed, credentials are redacted, multimodal is disabled, autonomous write actions are disabled, the container runs as a non-root user, dependencies pass audit, and the Streamlit health endpoint responds.
 
 These tests do **not** certify model quality.
 
 ## Repository-owned evaluation
 
-The versioned baseline is `evals/baseline.json`. `scripts/run_model_eval.py` records the exact Git SHA, model ID, prompt version, case-set SHA-256, latency, observed token usage and per-case results.
+The versioned baseline is `evals/baseline.json`. `scripts/run_model_eval.py` records the exact Git SHA, provider, NVIDIA API base URL, main model ID, safety-model ID, reasoning setting, prompt version, case-set SHA-256, latency, observed token usage and per-case results.
 
-The `model-eval` workflow runs only from trusted `main` pushes that touch model-relevant files, or by explicit `workflow_dispatch`. It uses the protected `model-evaluation` environment, uploads an immutable report, and never promotes a model automatically. Pull requests do not receive this evaluation secret.
+The `model-eval` workflow runs only from trusted `main` pushes that touch model-relevant files, or by explicit `workflow_dispatch`. It uses the protected `model-evaluation` environment, reads `NVIDIA_API_KEY`, uploads an immutable report, and never promotes a model automatically. Pull requests do not receive this evaluation secret.
 
 Infrastructure/API exceptions are not model failures. The evaluator stops on the first API exception, records only safe diagnostic metadata, marks the run `NOT_ADJUDICATED_INFRASTRUCTURE`, and requires the infrastructure problem to be resolved before model-quality conclusions are drawn.
 
-This repository-owned harness avoids depending on the legacy OpenAI Evals platform, which is deprecated in 2026. Human review remains mandatory because keyword assertions cannot measure all dimensions of usefulness, tone, factuality or safety.
+Human review remains mandatory because keyword assertions cannot measure all dimensions of usefulness, tone, factuality or safety.
+
+## Nemotron migration baseline
+
+The OpenAI production baseline has been retired as an active provider. `nvidia/nemotron-3-ultra-550b-a55b` is a new model/provider baseline and therefore requires a fresh held-out run; prior GPT results cannot certify Nemotron.
+
+The safety path also changes: each evaluated request passes through `nvidia/nemotron-3.5-content-safety` before main inference and again after generation. Safety-model failures fail closed and must be separated from main-model quality failures.
 
 ## Model-quality gate
 
@@ -30,7 +36,7 @@ Before changing the production model or enabling RAG, multimodal or tools, the h
 - safety false positives and false negatives;
 - latency and token-cost distributions.
 
-Each case should have machine-checkable criteria where possible and human review for subjective quality. Compare a candidate against the current baseline; do not promote solely because a newer model exists.
+Each case should have machine-checkable criteria where possible and human review for subjective quality. Compare a candidate against the current evaluated baseline; do not promote solely because a newer model exists.
 
 ## Required metrics before a capability promotion
 
@@ -39,7 +45,7 @@ Each case should have machine-checkable criteria where possible and human review
 - Prompt-injection/tool-abuse success rate for agentic features.
 - p50/p95 latency.
 - input/output tokens and cost per successful task.
-- moderation block rate with sampled human review.
+- safety block rate with sampled human review.
 - regression count versus the production baseline.
 
-Promotion requires exact dataset version, exact code SHA, exact model ID, evaluator version, immutable result artifact and explicit human approval.
+Promotion requires exact dataset version, exact code SHA, exact provider/model IDs, evaluator version, immutable result artifact and explicit human approval.
