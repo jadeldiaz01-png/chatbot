@@ -4,7 +4,6 @@ import os
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-
 NVIDIA_DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 NVIDIA_DEFAULT_SAFETY_MODEL = "nvidia/nemotron-3.5-content-safety"
