@@ -145,8 +145,9 @@ class AIService:
 
         if self._is_flagged(current_user_text):
             return GenerationResult(
-                "No puedo procesar ese contenido tal como está. "
-                "Puedes reformular la solicitud de forma segura.",
+                "I cannot process or execute that request as written. "
+                "No puedo procesar ni ejecutar esa solicitud tal como está. "
+                "Puedes reformularla de forma segura.",
                 blocked_by_moderation=True,
             )
 
