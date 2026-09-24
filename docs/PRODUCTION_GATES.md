@@ -4,12 +4,13 @@ The repository may be code-ready without being production-certified. Promotion i
 
 ## G0 — Repository governance
 
-Human/admin action required:
-- enforce a GitHub ruleset or equivalent branch protection on `main`;
-- require pull requests instead of direct pushes;
-- require the exact-SHA `runtime-container-ci / test-and-runtime` and dependency-lock status checks;
-- require human approval and resolved review conversations;
-- prevent bypass except for an explicitly governed emergency path.
+Verified for `main`:
+- active repository ruleset targets the default branch;
+- pull requests are required;
+- `test-and-runtime` and `verify-locks` are required;
+- review conversations must be resolved;
+- deletion and non-fast-forward updates are blocked;
+- no bypass actors are configured.
 
 ## G1 — Reproducible dependencies
 
@@ -22,20 +23,29 @@ Implemented in the candidate branch:
 
 This gate is satisfied for a release only when the lock-drift workflow and runtime CI both pass on the same exact SHA.
 
-## G2 — Model baseline
+## G2 — Nemotron model baseline
 
-Run `.github/workflows/model-eval.yml` manually against the production model and preserve the resulting report. Required evidence:
+Run `.github/workflows/model-eval.yml` against `nvidia/nemotron-3-ultra-550b-a55b` using the protected `model-evaluation` environment and preserve the resulting report. Required evidence:
 - exact Git SHA;
-- exact model ID;
+- exact NVIDIA model ID;
+- exact NVIDIA safety-model ID;
 - exact prompt version;
 - exact evaluation-corpus SHA-256;
 - no critical automated failures;
 - reviewed latency/token metrics;
 - documented human review.
 
-A newer model is a candidate, not an automatic upgrade.
+A model/provider change is a candidate, not an automatic promotion. The previous OpenAI baseline is not a fallback.
 
-## G3 — Public-edge controls
+## G3 — Provider privacy/data handling
+
+Before sensitive production traffic:
+- confirm the NVIDIA endpoint's retention and data-use terms;
+- do not send sensitive data through the NVIDIA Build trial endpoint while it may record API inputs/outputs;
+- prefer a partner or self-hosted NIM endpoint when the required privacy/retention guarantees cannot be met by the trial endpoint;
+- document the approved endpoint and secret scope.
+
+## G4 — Public-edge controls
 
 Before public scale, add authenticated or otherwise abuse-resistant edge controls:
 - distributed rate limiting rather than session-only throttling;
@@ -44,11 +54,11 @@ Before public scale, add authenticated or otherwise abuse-resistant edge control
 - bot/abuse controls appropriate to the deployment;
 - budget and usage alerts.
 
-## G4 — Deployment target
+## G5 — Deployment target
 
-Provision a production target with a server-side secret store. Never bake `OPENAI_API_KEY` into the image. Record deployment identity, environment, runtime version, exact image digest/artifact hash and rollback target.
+Provision a production target with a server-side secret store. Never bake `NVIDIA_API_KEY` into the image. Record deployment identity, environment, runtime version, exact image digest/artifact hash and rollback target.
 
-## G5 — Release evidence
+## G6 — Release evidence
 
 After an approved merge, `release-evidence.yml` must succeed and produce:
 - exact runtime image archive built from the hash-locked dependency graph;
@@ -59,18 +69,19 @@ After an approved merge, `release-evidence.yml` must succeed and produce:
 - GitHub/Sigstore provenance attestation;
 - SBOM attestation.
 
-## G6 — Canary and rollback
+## G7 — Canary and rollback
 
 Deploy the exact attested artifact to a controlled environment first. Exercise:
 - health/readiness;
-- one safe LLM request;
-- failure behavior with unavailable upstream;
-- logging without prompt/response content;
+- one safe Nemotron request through input/output safety checks;
+- failure behavior with unavailable NVIDIA upstream;
+- failure behavior with an invalid safety verdict;
+- logging without prompt/response/reasoning content;
 - rollback to the previous known-good SHA.
 
 Only then may the production status be adjudicated.
 
-## G7 — Advanced capability promotion
+## G8 — Advanced capability promotion
 
 RAG, multimodal, ML/DL and autonomous tools are independent promotions. Each requires its own data rights, evals, security tests, cost evidence and rollback. Tool write authority additionally requires least privilege, allowlisting, structured I/O, immutable audit evidence and explicit human approval.
 
