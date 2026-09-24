@@ -22,6 +22,7 @@ _PATTERN_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     ("openai_key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
+    ("nvidia_api_key", re.compile(r"\bnvapi-[A-Za-z0-9_-]{20,}\b")),
     (
         "github_token",
         re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"),
