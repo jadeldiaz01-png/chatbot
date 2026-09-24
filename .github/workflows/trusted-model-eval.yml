@@ -22,6 +22,11 @@ on:
         required: true
         default: '0.90'
         type: string
+      replicate_count:
+        description: Number of sequential identical evaluation replicates
+        required: true
+        default: '3'
+        type: string
 
 permissions:
   contents: read
@@ -39,6 +44,7 @@ jobs:
       TARGET_SHA: ${{ inputs.candidate_sha || '7096bc6f22f4fc0962b29bf7bffff406b9b8bc79' }}
       EVAL_MODEL: ${{ inputs.model || 'nvidia/nemotron-3-ultra-550b-a55b' }}
       EVAL_MIN_PASS_RATE: ${{ inputs.min_pass_rate || '0.90' }}
+      EVAL_REPLICATES: ${{ inputs.replicate_count || '3' }}
     steps:
       - name: Validate immutable candidate SHA
         shell: bash
@@ -82,7 +88,7 @@ jobs:
           PY
       - name: Build exact candidate runtime
         run: docker build --pull --target runtime -t jadel-chatbot-eval:${TARGET_SHA} .
-      - name: Run held-out Nemotron evaluation
+      - name: Run sequential held-out Nemotron replicates
         id: eval
         shell: bash
         env:
@@ -95,25 +101,105 @@ jobs:
             echo 'NVIDIA_API_KEY is not configured for the model-evaluation environment' >&2
             exit 2
           fi
+          [[ "${EVAL_REPLICATES}" =~ ^[1-9][0-9]*$ ]]
+          if [ "${EVAL_REPLICATES}" -gt 5 ]; then
+            echo 'EVAL_REPLICATES must be <= 5' >&2
+            exit 2
+          fi
+
           mkdir -p eval-results
-          set +e
-          docker run --name jadel-chatbot-trusted-eval \
-            -e NVIDIA_API_KEY \
-            -e NVIDIA_MODEL \
-            -e MIN_EVAL_PASS_RATE \
-            -e GITHUB_SHA="${TARGET_SHA}" \
-            jadel-chatbot-eval:${TARGET_SHA} \
-            python -m scripts.run_model_eval --output /tmp/eval-report.json
-          eval_code=$?
-          set -e
-          docker cp jadel-chatbot-trusted-eval:/tmp/eval-report.json eval-results/report.json || true
-          docker rm -f jadel-chatbot-trusted-eval >/dev/null 2>&1 || true
-          exit ${eval_code}
-      - name: Upload immutable evaluation report
+          overall_code=0
+
+          for i in $(seq 1 "${EVAL_REPLICATES}"); do
+            name="jadel-chatbot-trusted-eval-r${i}"
+            echo "Starting replicate ${i}/${EVAL_REPLICATES}"
+            set +e
+            docker run --name "${name}" \
+              -e NVIDIA_API_KEY \
+              -e NVIDIA_MODEL \
+              -e MIN_EVAL_PASS_RATE \
+              -e GITHUB_SHA="${TARGET_SHA}" \
+              jadel-chatbot-eval:${TARGET_SHA} \
+              python -m scripts.run_model_eval --output /tmp/eval-report.json
+            eval_code=$?
+            set -e
+            docker cp "${name}":/tmp/eval-report.json "eval-results/report-${i}.json" || true
+            docker rm -f "${name}" >/dev/null 2>&1 || true
+
+            if [ "${eval_code}" -ne 0 ] && [ "${overall_code}" -eq 0 ]; then
+              overall_code="${eval_code}"
+            fi
+          done
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          reports = []
+          for path in sorted(Path("eval-results").glob("report-*.json")):
+              report = json.loads(path.read_text(encoding="utf-8"))
+              summary = report.get("summary", {})
+              reports.append(
+                  {
+                      "file": path.name,
+                      "evaluation_status": report.get("evaluation_status"),
+                      "git_sha": report.get("git_sha"),
+                      "case_set_sha256": report.get("case_set_sha256"),
+                      "reasoning_enabled": report.get("reasoning_enabled"),
+                      "max_output_tokens": report.get("max_output_tokens"),
+                      "passed": summary.get("passed"),
+                      "failed": summary.get("failed"),
+                      "p95_latency_seconds": summary.get("p95_latency_seconds"),
+                      "stage_latency": summary.get("stage_latency"),
+                      "total_tokens_observed": summary.get("total_tokens_observed"),
+                  }
+              )
+
+          if not reports:
+              raise SystemExit("no replicate reports were produced")
+
+          expected_sha = reports[0]["git_sha"]
+          expected_cases = reports[0]["case_set_sha256"]
+          for item in reports:
+              if item["git_sha"] != expected_sha:
+                  raise SystemExit("replicate git_sha mismatch")
+              if item["case_set_sha256"] != expected_cases:
+                  raise SystemExit("replicate case_set_sha256 mismatch")
+
+          p95_values = [
+              float(item["p95_latency_seconds"])
+              for item in reports
+              if isinstance(item.get("p95_latency_seconds"), (int, float))
+          ]
+          aggregate = {
+              "schema_version": "1.0",
+              "replicate_count": len(reports),
+              "git_sha": expected_sha,
+              "case_set_sha256": expected_cases,
+              "replicates": reports,
+              "p95_latency_seconds": {
+                  "min": min(p95_values) if p95_values else None,
+                  "max": max(p95_values) if p95_values else None,
+                  "mean": (
+                      round(sum(p95_values) / len(p95_values), 4)
+                      if p95_values
+                      else None
+                  ),
+              },
+          }
+          Path("eval-results/replicate-summary.json").write_text(
+              json.dumps(aggregate, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(aggregate["p95_latency_seconds"], sort_keys=True))
+          PY
+
+          exit "${overall_code}"
+      - name: Upload immutable evaluation reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: trusted-model-eval-${{ env.TARGET_SHA }}
-          path: eval-results/report.json
+          path: eval-results/
           if-no-files-found: warn
           retention-days: 30
