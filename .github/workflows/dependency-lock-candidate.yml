@@ -1,0 +1,51 @@
+name: dependency-lock-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-locks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Verify checked-out SHA
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+      - name: Regenerate platform hash locks
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${PWD}:/work" \
+            -w /work \
+            python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 \
+            sh -lc 'set -eu; python -m pip install --no-cache-dir pip-tools==7.6.1; pip-compile --strip-extras --no-emit-index-url --output-file /tmp/resolved-runtime.txt requirements.txt; mkdir -p /tmp/runtime-wheels; python -m pip download --only-binary=:all: --dest /tmp/runtime-wheels -r /tmp/resolved-runtime.txt; python scripts/build_platform_lock.py --wheels /tmp/runtime-wheels --output /work/requirements.lock.generated; printf "%s\n" "-r /work/requirements.txt" "-r /work/requirements-dev.txt" > /tmp/ci.in; pip-compile --strip-extras --no-emit-index-url --output-file /tmp/resolved-ci.txt /tmp/ci.in; mkdir -p /tmp/ci-wheels; python -m pip download --only-binary=:all: --dest /tmp/ci-wheels -r /tmp/resolved-ci.txt; python scripts/build_platform_lock.py --wheels /tmp/ci-wheels --output /work/requirements-ci.lock.generated'
+          cmp requirements.lock requirements.lock.generated || { diff -u requirements.lock requirements.lock.generated || true; exit 1; }
+          cmp requirements-ci.lock requirements-ci.lock.generated || { diff -u requirements-ci.lock requirements-ci.lock.generated || true; exit 1; }
+          rm -f requirements.lock.generated requirements-ci.lock.generated
+      - name: Verify runtime lock in clean base
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v "${PWD}:/work:ro" -w /work \
+            python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 \
+            sh -lc 'python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock && python -m pip check'
+      - name: Verify CI lock in clean base
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v "${PWD}:/work:ro" -w /work \
+            python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 \
+            sh -lc 'python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements-ci.lock && python -m pip check && ruff --version && pip-audit --version'
