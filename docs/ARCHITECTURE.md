@@ -29,7 +29,7 @@ The NVIDIA Build trial endpoint may record API inputs and outputs. For that reas
 ## Capability progression
 
 - Text LLM: enabled, advisory-only.
-- Internal reasoning: enabled; reasoning traces are not exposed to users or application logs.
+- Internal reasoning: disabled in the isolated latency candidate; reasoning traces are not exposed to users or application logs.
 - Multimodal image input: disabled because the Nemotron 3 Ultra baseline is text-only. A separate multimodal model and eval are required before enabling it.
 - RAG: gated. A trusted, versioned corpus with lineage is required before retrieval is connected.
 - ML ranking: research-only until a labeled dataset and held-out evaluation exist.
