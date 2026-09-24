@@ -1,0 +1,126 @@
+name: provider-latency-floor
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/provider-latency-floor.yml'
+      - 'scripts/run_provider_latency_probe.py'
+      - 'tests/test_provider_latency_probe.py'
+      - 'docs/PROVIDER_LATENCY_FLOOR.md'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/provider-latency-floor.yml'
+      - 'scripts/run_provider_latency_probe.py'
+      - 'tests/test_provider_latency_probe.py'
+      - 'docs/PROVIDER_LATENCY_FLOOR.md'
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: Sequential repetitions per NVIDIA model
+        required: true
+        default: '20'
+        type: string
+      slo_seconds:
+        description: Necessary-condition p95 target in seconds
+        required: true
+        default: '8'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-latency-floor
+  cancel-in-progress: false
+
+jobs:
+  validate-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Validate provider probe offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${PWD}:/work" \
+            -w /work \
+            python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 \
+            sh -ceu '
+              python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+              python -m compileall -q scripts/run_provider_latency_probe.py tests/test_provider_latency_probe.py
+              python -m unittest tests.test_provider_latency_probe -v
+            '
+
+  live-probe:
+    if: github.event_name != 'pull_request'
+    needs: validate-probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: model-evaluation
+    env:
+      PROBE_REPETITIONS: ${{ inputs.repetitions || '20' }}
+      PROBE_SLO_SECONDS: ${{ inputs.slo_seconds || '8' }}
+      NVIDIA_API_BASE_URL: https://integrate.api.nvidia.com/v1
+      NVIDIA_MODEL: nvidia/nemotron-3-ultra-550b-a55b
+      NVIDIA_SAFETY_MODEL: nvidia/nemotron-3.5-content-safety
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Validate bounded probe inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${PROBE_REPETITIONS}" =~ ^[0-9]+$ ]]
+          [ "${PROBE_REPETITIONS}" -ge 5 ]
+          [ "${PROBE_REPETITIONS}" -le 30 ]
+          python - <<'PY'
+          import os
+          slo = float(os.environ["PROBE_SLO_SECONDS"])
+          if slo <= 0:
+              raise SystemExit("PROBE_SLO_SECONDS must be positive")
+          PY
+      - name: Run synthetic NVIDIA provider latency-floor probe
+        id: probe
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -u
+          if [ -z "${NVIDIA_API_KEY}" ]; then
+            echo 'NVIDIA_API_KEY is not configured for the model-evaluation environment' >&2
+            exit 2
+          fi
+
+          mkdir -p provider-latency-results
+          set +e
+          docker run --rm \
+            -v "${PWD}:/work" \
+            -w /work \
+            -e NVIDIA_API_KEY \
+            -e NVIDIA_API_BASE_URL \
+            -e NVIDIA_MODEL \
+            -e NVIDIA_SAFETY_MODEL \
+            -e PROBE_REPETITIONS \
+            -e PROBE_SLO_SECONDS \
+            -e GITHUB_SHA \
+            python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 \
+            sh -ceu '
+              python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+              python -m scripts.run_provider_latency_probe \
+                --output /work/provider-latency-results/report.json
+            '
+          probe_code=$?
+          set -e
+          exit "${probe_code}"
+      - name: Upload immutable provider latency report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: provider-latency-floor-${{ github.sha }}
+          path: provider-latency-results/report.json
+          if-no-files-found: warn
+          retention-days: 30
