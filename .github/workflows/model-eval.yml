@@ -1,0 +1,89 @@
+name: model-eval
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/model-eval.yml'
+      - 'jadel_chatbot/**'
+      - 'scripts/run_model_eval.py'
+      - 'evals/baseline.json'
+      - 'streamlit_app.py'
+      - 'production-manifest.json'
+      - 'Dockerfile'
+      - 'requirements.lock'
+  workflow_dispatch:
+    inputs:
+      model:
+        description: NVIDIA NIM model ID to evaluate
+        required: true
+        default: nvidia/nemotron-3-ultra-550b-a55b
+        type: string
+      min_pass_rate:
+        description: Minimum automated pass rate (human review is still required)
+        required: true
+        default: '0.90'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model-eval-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: model-evaluation
+    env:
+      SOURCE_SHA: ${{ github.sha }}
+      EVAL_MODEL: ${{ inputs.model || 'nvidia/nemotron-3-ultra-550b-a55b' }}
+      EVAL_MIN_PASS_RATE: ${{ inputs.min_pass_rate || '0.90' }}
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Verify checked-out SHA
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+      - name: Build evaluated runtime
+        run: docker build --pull --target runtime -t jadel-chatbot-eval:${SOURCE_SHA} .
+      - name: Run held-out Nemotron evaluation
+        id: eval
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_MODEL: ${{ env.EVAL_MODEL }}
+          MIN_EVAL_PASS_RATE: ${{ env.EVAL_MIN_PASS_RATE }}
+        run: |
+          set -u
+          if [ -z "${NVIDIA_API_KEY}" ]; then
+            echo 'NVIDIA_API_KEY is not configured for the model-evaluation environment' >&2
+            exit 2
+          fi
+          mkdir -p eval-results
+          set +e
+          docker run --name jadel-chatbot-model-eval \
+            -e NVIDIA_API_KEY \
+            -e NVIDIA_MODEL \
+            -e MIN_EVAL_PASS_RATE \
+            -e GITHUB_SHA="${SOURCE_SHA}" \
+            jadel-chatbot-eval:${SOURCE_SHA} \
+            python -m scripts.run_model_eval --output /tmp/eval-report.json
+          eval_code=$?
+          set -e
+          docker cp jadel-chatbot-model-eval:/tmp/eval-report.json eval-results/report.json || true
+          docker rm -f jadel-chatbot-model-eval >/dev/null 2>&1 || true
+          exit ${eval_code}
+      - name: Upload immutable evaluation report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: model-eval-${{ env.SOURCE_SHA }}-${{ env.EVAL_MODEL }}
+          path: eval-results/report.json
+          if-no-files-found: warn
+          retention-days: 30

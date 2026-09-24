@@ -1,0 +1,56 @@
+name: release-evidence
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build verified runtime
+        run: |
+          set -euo pipefail
+          docker build --pull --target test -t jadel-chatbot-test:${GITHUB_SHA} .
+          docker build --pull --target runtime -t jadel-chatbot-runtime:${GITHUB_SHA} .
+      - name: Generate CycloneDX SBOM and release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          cp production-manifest.json requirements.lock requirements-ci.lock evidence/
+          docker run --rm jadel-chatbot-test:${GITHUB_SHA} pip-audit -r requirements.lock --format cyclonedx-json > evidence/python-sbom.cdx.json
+          docker inspect jadel-chatbot-runtime:${GITHUB_SHA} > evidence/container-inspect.json
+          docker save jadel-chatbot-runtime:${GITHUB_SHA} | gzip -9 > jadel-chatbot-runtime-${GITHUB_SHA}.tar.gz
+          sha256sum jadel-chatbot-runtime-${GITHUB_SHA}.tar.gz evidence/* > evidence/SHA256SUMS
+          tar -czf jadel-chatbot-evidence-${GITHUB_SHA}.tar.gz evidence
+      - name: Attest runtime build provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
+        with:
+          subject-path: jadel-chatbot-runtime-${{ github.sha }}.tar.gz
+      - name: Attest runtime SBOM
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
+        with:
+          subject-path: jadel-chatbot-runtime-${{ github.sha }}.tar.gz
+          sbom-path: evidence/python-sbom.cdx.json
+      - name: Upload release evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: jadel-chatbot-release-${{ github.sha }}
+          path: |
+            jadel-chatbot-runtime-${{ github.sha }}.tar.gz
+            jadel-chatbot-evidence-${{ github.sha }}.tar.gz
+          if-no-files-found: error
+          retention-days: 30
