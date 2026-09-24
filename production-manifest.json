@@ -17,7 +17,7 @@
     "production_model": "nvidia/nemotron-3-ultra-550b-a55b",
     "candidate_models_requiring_eval": [],
     "reasoning": {
-      "enabled": true,
+      "enabled": false,
       "expose_reasoning_trace": false
     },
     "moderation": {
