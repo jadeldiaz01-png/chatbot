@@ -14,6 +14,12 @@ class SecurityTests(unittest.TestCase):
         self.assertNotIn("sk-abcdefghijklmnopqrstuvwxyz123456", result.text)
         self.assertIn("openai_key", result.detected_types)
 
+    def test_nvidia_key_is_redacted(self) -> None:
+        value = "use nvapi-abcdefghijklmnopqrstuvwxyz123456 for testing"
+        result = redact_likely_secrets(value)
+        self.assertNotIn("nvapi-abcdefghijklmnopqrstuvwxyz123456", result.text)
+        self.assertIn("nvidia_api_key", result.detected_types)
+
     def test_generic_secret_assignment_is_redacted(self) -> None:
         result = redact_likely_secrets("token=supersecretvalue123")
         self.assertEqual(result.text, "token=[REDACTED]")
