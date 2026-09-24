@@ -49,3 +49,11 @@ Each case should have machine-checkable criteria where possible and human review
 - regression count versus the production baseline.
 
 Promotion requires exact dataset version, exact code SHA, exact provider/model IDs, evaluator version, immutable result artifact and explicit human approval.
+
+## Stage latency instrumentation
+
+The evaluator records end-to-end latency and separates the NVIDIA request path into `input_safety`, `main_model`, and `output_safety`. For each observed stage it records latency, HTTP attempt count, derived retry count, status codes, provider request IDs, model ID, output-token limit, configured timeout, and configured retry budget.
+
+HTTP request hooks count actual SDK attempts, including transparent retries. The instrumentation does not record request bodies, prompts, generated answers, authorization headers, API keys, or arbitrary response headers. Per-stage p50/p95, total HTTP attempts, total retries, and retried-case counts are aggregated into the immutable evaluation report. Infrastructure exceptions retain only the same safe stage metadata plus the existing sanitized provider error fields.
+
+This instrumentation is observational only: it must not change model IDs, safety policy, prompt version, sampling, output limits, dataset, quality threshold, or the production SLO while a latency experiment is being adjudicated.
