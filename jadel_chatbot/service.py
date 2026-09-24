@@ -40,6 +40,7 @@ class AIService:
         self._attempt_counts: dict[str, int] = {}
         self._status_codes: dict[str, list[int]] = {}
         self._request_ids: dict[str, list[str]] = {}
+        self.last_error_stage_metrics: dict[str, dict[str, Any]] = {}
         http_client = DefaultHttpxClient(
             event_hooks={
                 "request": [self._record_http_attempt],
@@ -121,17 +122,14 @@ class AIService:
         completion: Any | None = None
         try:
             completion = self.client.chat.completions.create(**request)
-        except Exception as exc:
+        except Exception:
             metrics = self._finalize_stage_metrics(
                 stage,
                 request=request,
                 latency_seconds=time.perf_counter() - started,
                 completion=None,
             )
-            try:
-                setattr(exc, "stage_metrics", {stage: metrics})
-            except Exception:
-                pass
+            self.last_error_stage_metrics = {stage: metrics}
             raise
         finally:
             self._active_stage = None
@@ -271,6 +269,7 @@ class AIService:
         if image_data_url is not None:
             raise ValueError("Nemotron 3 Ultra production baseline is text-only")
 
+        self.last_error_stage_metrics = {}
         stage_metrics: dict[str, dict[str, Any]] = {}
         if self._is_flagged(
             current_user_text,
