@@ -9,7 +9,7 @@ Production-oriented Streamlit assistant for Jadel Tech RD using NVIDIA NIM with 
 - Dedicated input/output safety model: `nvidia/nemotron-3.5-content-safety`.
 - Server-side `NVIDIA_API_KEY` only; the runtime has no `OPENAI_API_KEY` dependency.
 - The Python `openai` package is retained only as an OpenAI-compatible protocol client for NVIDIA NIM; the runtime does not target `api.openai.com`.
-- Reasoning is enabled for Nemotron Ultra, but reasoning traces are not exposed to the UI or application logs.
+- Reasoning is disabled by default for the isolated latency candidate; reasoning traces remain unavailable to the UI and application logs.
 - Likely credential redaction before model calls, including NVIDIA `nvapi-` keys.
 - Bounded input, history, output tokens, timeout and retries.
 - Session-level soft throttling.
@@ -51,7 +51,7 @@ Do not commit `.env`, API keys or other credentials.
 | `NVIDIA_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | Main evaluated model |
 | `NVIDIA_SAFETY_MODEL` | `nvidia/nemotron-3.5-content-safety` | Input/output content-safety model |
 | `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | NVIDIA NIM API endpoint |
-| `NVIDIA_ENABLE_THINKING` | `true` | Enable Nemotron reasoning internally |
+| `NVIDIA_ENABLE_THINKING` | `false` | Isolated latency candidate: disable Nemotron reasoning internally |
 | `NVIDIA_TEMPERATURE` | `1.0` | Main-model sampling temperature |
 | `NVIDIA_TOP_P` | `0.95` | Main-model nucleus sampling |
 | `ENABLE_MODERATION` | `true` | Fail-safe NVIDIA safety moderation |
