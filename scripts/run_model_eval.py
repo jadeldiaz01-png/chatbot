@@ -60,10 +60,6 @@ def safe_error_metadata(exc: Exception) -> dict[str, Any]:
             if isinstance(remote_type, str) and remote_type:
                 metadata["remote_error_type"] = remote_type
 
-    stage_metrics = getattr(exc, "stage_metrics", None)
-    if isinstance(stage_metrics, dict):
-        metadata["stage_metrics"] = stage_metrics
-
     return metadata
 
 
@@ -112,6 +108,7 @@ def evaluate_case(service: AIService, case: dict[str, Any]) -> dict[str, Any]:
             "human_review": True,
             "redaction_detected_types": list(redaction.detected_types),
             "latency_seconds": round(time.perf_counter() - started, 4),
+            "stage_metrics": service.last_error_stage_metrics,
             **safe_error_metadata(exc),
         }
 
