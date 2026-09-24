@@ -135,7 +135,7 @@ def main() -> int:
 
     config = AppConfig.from_env()
     if not config.api_key:
-        print("OPENAI_API_KEY is required for live model evaluation")
+        print("NVIDIA_API_KEY is required for live model evaluation")
         return 2
 
     service = AIService(config)
@@ -174,10 +174,14 @@ def main() -> int:
         evaluation_status = "PASS"
 
     report = {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "created_at": datetime.now(UTC).isoformat(),
         "git_sha": os.getenv("GITHUB_SHA", "local"),
+        "provider": config.provider,
+        "api_base_url": config.api_base_url,
         "model": config.model,
+        "safety_model": config.safety_model,
+        "reasoning_enabled": config.enable_thinking,
         "prompt_version": PROMPT_VERSION,
         "case_set_sha256": hashlib.sha256(raw_cases).hexdigest(),
         "human_review_required": True,
