@@ -21,6 +21,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.safety_model, NVIDIA_DEFAULT_SAFETY_MODEL)
         self.assertTrue(config.moderation_enabled)
         self.assertFalse(config.enable_thinking)
+        self.assertEqual(config.max_output_tokens, 512)
         self.assertFalse(config.multimodal_enabled)
         self.assertEqual(config.max_retries, 2)
 
