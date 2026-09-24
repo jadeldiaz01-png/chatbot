@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.2",
+  "schema_version": "1.3",
   "system": "jadel-chatbot",
   "repository": "jadeldiaz01-png/chatbot",
   "baseline_sha": "27d6c202905d73dd417c38c75c083ade5ae26278",
@@ -11,22 +11,35 @@
     "external_actions_enabled": false
   },
   "ai": {
-    "provider": "openai",
-    "api": "responses",
-    "production_model": "gpt-5.6-luna",
-    "candidate_models_requiring_eval": ["gpt-6-luna", "gpt-6-sol"],
-    "response_store": false,
+    "provider": "nvidia_nim",
+    "api": "openai_compatible_chat_completions",
+    "base_url": "https://integrate.api.nvidia.com/v1",
+    "production_model": "nvidia/nemotron-3-ultra-550b-a55b",
+    "candidate_models_requiring_eval": [],
+    "reasoning": {
+      "enabled": true,
+      "expose_reasoning_trace": false
+    },
     "moderation": {
       "enabled": true,
-      "model": "omni-moderation-latest",
+      "provider": "nvidia_nim",
+      "model": "nvidia/nemotron-3.5-content-safety",
       "input_and_output": true,
-      "multimodal_input_when_enabled": true
+      "fail_closed_on_unrecognized_verdict": true
+    },
+    "provider_data_controls": {
+      "openai_platform_runtime_enabled": false,
+      "openai_api_key_runtime_reference": false,
+      "nvidia_trial_endpoint_may_record_inputs_outputs": true,
+      "sensitive_data_allowed_on_trial_endpoint": false,
+      "production_privacy_review_required": true,
+      "preferred_production_endpoint": "partner_or_self_hosted_nim"
     },
     "limits": {
       "max_input_chars": 4000,
       "max_history_messages": 20,
-      "max_output_tokens": 800,
-      "request_timeout_seconds": 30,
+      "max_output_tokens": 1024,
+      "request_timeout_seconds": 45,
       "max_retries": 2,
       "session_requests_per_minute": 10
     },
@@ -44,9 +57,11 @@
       "authority": "advisory_only"
     },
     "multimodal_image_input": {
-      "state": "gated",
+      "state": "disabled",
       "default_enabled": false,
+      "reason": "Nemotron 3 Ultra hosted baseline is text-only",
       "required_evidence": [
+        "separate_multimodal_model_selection",
         "privacy_review",
         "image_eval",
         "moderation_eval",
@@ -101,7 +116,8 @@
     "log_response_content": false,
     "redact_likely_credentials": true,
     "server_side_api_key_only": true,
-    "authentication_required_before_public_scale": true
+    "authentication_required_before_public_scale": true,
+    "sensitive_content_blocked_on_nvidia_trial_endpoint": true
   },
   "sre": {
     "target_availability": 0.995,
@@ -122,13 +138,15 @@
     "dependency_updates_automated": true,
     "cyclonedx_sbom_required_for_release": true,
     "provenance_attestation_required_for_release": true,
-    "vulnerability_audit_required": true
+    "vulnerability_audit_required": true,
+    "openai_python_package_role": "protocol_client_only_for_nvidia_openai_compatible_api"
   },
   "repository_governance": {
     "pull_request_required_for_production": true,
     "exact_sha_status_check_required": true,
     "human_approval_required": true,
-    "ruleset_enforcement_required": true
+    "ruleset_enforcement_required": true,
+    "ruleset_verified_active": true
   },
   "release_gates": {
     "unit_tests": "required",
@@ -139,14 +157,16 @@
     "exact_sha_ci": "required",
     "repository_ruleset": "required",
     "model_quality_eval": "required_before_model_change",
+    "provider_privacy_review": "required",
     "human_review": "required",
     "human_merge_approval": "required"
   },
   "production_status": "NOT_CERTIFIED",
   "blocking_evidence": [
-    "exact_sha_ci_for_this_increment",
-    "repository_ruleset_enforcement",
-    "model_quality_eval_baseline",
+    "exact_sha_ci_for_nemotron_increment",
+    "nvidia_api_key_environment_secret",
+    "nemotron_model_quality_eval_baseline",
+    "nvidia_provider_privacy_and_data_handling_review",
     "authenticated_edge_rate_limit_or_equivalent",
     "production_deployment_and_rollback_evidence",
     "release_sbom_and_provenance"
