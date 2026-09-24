@@ -1,0 +1,128 @@
+name: provider-ultra-transport-diagnostic
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/provider_ultra_transport_diagnostic.py'
+      - '.github/workflows/provider-ultra-transport-diagnostic.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/provider_ultra_transport_diagnostic.py'
+      - '.github/workflows/provider-ultra-transport-diagnostic.yml'
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: Paired sequential repetitions per transport mode
+        required: true
+        default: '20'
+        type: string
+      slo_seconds:
+        description: Total-latency p95 SLO in seconds
+        required: true
+        default: '8.0'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-ultra-transport-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  validate-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validate diagnostic source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/provider_ultra_transport_diagnostic.py
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path("scripts/provider_ultra_transport_diagnostic.py").read_text(
+              encoding="utf-8"
+          )
+          required = (
+              "nvidia/nemotron-3-ultra-550b-a55b",
+              "stream=True",
+              "stream=False",
+              "REQUEST_TIMEOUT_SECONDS = 15.0",
+              "MAX_RETRIES = 0",
+              "paired_sequential_alternating_order",
+              "response_headers_seconds",
+              "first_content_seconds",
+              "complete=False",
+              "chatbot_functional_configuration_changed",
+              "allow_nan=False",
+          )
+          missing = [item for item in required if item not in text]
+          if missing:
+              raise SystemExit(f"missing Ultra transport diagnostic markers: {missing}")
+          if "NVIDIA_API_KEY" not in text:
+              raise SystemExit("diagnostic must consume NVIDIA_API_KEY from environment")
+          print("PROVIDER_ULTRA_TRANSPORT_DIAGNOSTIC_SOURCE=PASS")
+          PY
+
+  provider-ultra-transport-diagnostic:
+    if: github.event_name != 'pull_request'
+    needs: validate-diagnostic
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: model-evaluation
+    env:
+      DIAGNOSTIC_REPETITIONS: ${{ inputs.repetitions || '20' }}
+      DIAGNOSTIC_SLO_SECONDS: ${{ inputs.slo_seconds || '8.0' }}
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Build pinned Python 3.12 diagnostic runtime
+        run: docker build --pull -t jadel-chatbot-ultra-transport-diagnostic:${GITHUB_SHA} .
+      - name: Run paired Ultra streaming vs non-streaming diagnostic
+        id: diagnostic
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -u
+          if [ -z "${NVIDIA_API_KEY}" ]; then
+            echo 'NVIDIA_API_KEY is not configured for the model-evaluation environment' >&2
+            exit 2
+          fi
+          [[ "${DIAGNOSTIC_REPETITIONS}" =~ ^[0-9]+$ ]]
+          mkdir -p provider-ultra-transport-diagnostic
+
+          set +e
+          docker run --name jadel-chatbot-ultra-transport-diagnostic \
+            -e NVIDIA_API_KEY \
+            -e GITHUB_SHA="${GITHUB_SHA}" \
+            jadel-chatbot-ultra-transport-diagnostic:${GITHUB_SHA} \
+            python scripts/provider_ultra_transport_diagnostic.py \
+              --repetitions "${DIAGNOSTIC_REPETITIONS}" \
+              --slo-seconds "${DIAGNOSTIC_SLO_SECONDS}" \
+              --output /tmp/provider-ultra-transport-diagnostic-report.json
+          diagnostic_code=$?
+          set -e
+
+          docker cp \
+            jadel-chatbot-ultra-transport-diagnostic:/tmp/provider-ultra-transport-diagnostic-report.json \
+            provider-ultra-transport-diagnostic/report.json || true
+          docker rm -f jadel-chatbot-ultra-transport-diagnostic >/dev/null 2>&1 || true
+          exit "${diagnostic_code}"
+      - name: Upload immutable Ultra transport diagnostic report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: provider-ultra-transport-diagnostic-${{ github.sha }}
+          path: provider-ultra-transport-diagnostic/report.json
+          if-no-files-found: warn
+          retention-days: 30
