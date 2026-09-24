@@ -26,6 +26,14 @@ class ManifestTests(unittest.TestCase):
         self.assertFalse(controls["sensitive_data_allowed_on_trial_endpoint"])
         self.assertTrue(controls["production_privacy_review_required"])
 
+    def test_evaluation_telemetry_excludes_request_payloads(self) -> None:
+        evaluation = self.manifest["ai"]["evaluation"]
+        self.assertTrue(evaluation["stage_latency_instrumentation"])
+        self.assertTrue(evaluation["retry_attempt_instrumentation"])
+        self.assertFalse(evaluation["request_payload_logging"])
+        self.assertNotIn("prompt", evaluation["request_metadata_fields"])
+        self.assertNotIn("request_body", evaluation["request_metadata_fields"])
+
     def test_release_requires_human_approval(self) -> None:
         self.assertEqual(
             self.manifest["release_gates"]["human_merge_approval"], "required"
