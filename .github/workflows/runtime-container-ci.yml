@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  runtime-container:
+  test-and-runtime:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
