@@ -40,7 +40,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run -d --name jadel-chatbot-test-runtime -p 18502:8501 -e OPENAI_API_KEY=dummy-ci-key jadel-chatbot-runtime:${SOURCE_SHA}
+          docker run -d --name jadel-chatbot-test-runtime -p 18502:8501 -e NVIDIA_API_KEY=dummy-ci-key jadel-chatbot-runtime:${SOURCE_SHA}
           trap 'docker logs jadel-chatbot-test-runtime || true; docker rm -f jadel-chatbot-test-runtime || true' EXIT
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:18502/_stcore/health >/dev/null; then
