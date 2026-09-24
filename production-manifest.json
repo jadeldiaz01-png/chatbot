@@ -38,7 +38,7 @@
     "limits": {
       "max_input_chars": 4000,
       "max_history_messages": 20,
-      "max_output_tokens": 1024,
+      "max_output_tokens": 512,
       "request_timeout_seconds": 45,
       "max_retries": 2,
       "session_requests_per_minute": 10
