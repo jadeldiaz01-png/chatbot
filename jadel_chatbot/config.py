@@ -88,7 +88,7 @@ class AppConfig:
                 "MAX_HISTORY_MESSAGES", 20, minimum=2, maximum=100
             ),
             max_output_tokens=_env_int(
-                "MAX_OUTPUT_TOKENS", 1024, minimum=64, maximum=16384
+                "MAX_OUTPUT_TOKENS", 512, minimum=64, maximum=16384
             ),
             timeout_seconds=_env_float(
                 "NVIDIA_TIMEOUT_SECONDS", 45.0, minimum=1.0, maximum=180.0
