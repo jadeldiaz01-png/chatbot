@@ -90,7 +90,7 @@ def evaluate_case(service: AIService, case: dict[str, Any]) -> dict[str, Any]:
             "redaction_detected_types": list(redaction.detected_types),
             "blocked_by_moderation": result.blocked_by_moderation,
             "latency_seconds": round(latency_seconds, 4),
-            "stage_metrics": result.stage_metrics or {},
+            "stage_metrics": getattr(result, "stage_metrics", None) or {},
             "response_id": result.response_id,
             "model": result.model,
             "input_tokens": result.input_tokens,
@@ -108,7 +108,7 @@ def evaluate_case(service: AIService, case: dict[str, Any]) -> dict[str, Any]:
             "human_review": True,
             "redaction_detected_types": list(redaction.detected_types),
             "latency_seconds": round(time.perf_counter() - started, 4),
-            "stage_metrics": service.last_error_stage_metrics,
+            "stage_metrics": getattr(service, "last_error_stage_metrics", {}),
             **safe_error_metadata(exc),
         }
 
