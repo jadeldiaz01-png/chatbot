@@ -1,0 +1,119 @@
+name: trusted-model-eval
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/trusted-model-eval.yml'
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact candidate commit SHA to evaluate
+        required: true
+        default: 5d5b0b3e94e0aeb74fca534c9ad9d48d65ac8a28
+        type: string
+      model:
+        description: NVIDIA NIM model ID
+        required: true
+        default: nvidia/nemotron-3-ultra-550b-a55b
+        type: string
+      min_pass_rate:
+        description: Minimum automated pass rate; human review remains required
+        required: true
+        default: '0.90'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trusted-model-eval
+  cancel-in-progress: false
+
+jobs:
+  evaluate-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: model-evaluation
+    env:
+      TARGET_SHA: ${{ inputs.candidate_sha || '5d5b0b3e94e0aeb74fca534c9ad9d48d65ac8a28' }}
+      EVAL_MODEL: ${{ inputs.model || 'nvidia/nemotron-3-ultra-550b-a55b' }}
+      EVAL_MIN_PASS_RATE: ${{ inputs.min_pass_rate || '0.90' }}
+    steps:
+      - name: Validate immutable candidate SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${TARGET_SHA}" =~ ^[0-9a-f]{40}$ ]]
+      - name: Checkout exact candidate revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          persist-credentials: false
+      - name: Verify checked-out SHA and NVIDIA-only boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${TARGET_SHA}"
+          python - <<'PY'
+          from pathlib import Path
+
+          forbidden = (
+              "OPENAI" + "_API_KEY",
+              "OPENAI" + "_MODEL",
+              "api." + "openai.com",
+          )
+          targets = (
+              Path("jadel_chatbot/config.py"),
+              Path("jadel_chatbot/service.py"),
+              Path("streamlit_app.py"),
+              Path(".github/workflows/runtime-container-ci.yml"),
+              Path(".github/workflows/model-eval.yml"),
+          )
+          violations = []
+          for path in targets:
+              content = path.read_text(encoding="utf-8")
+              for token in forbidden:
+                  if token in content:
+                      violations.append(f"{path}: forbidden provider token {token}")
+          if violations:
+              raise SystemExit("\n".join(violations))
+          print("NVIDIA_PROVIDER_BOUNDARY=PASS")
+          PY
+      - name: Build exact candidate runtime
+        run: docker build --pull --target runtime -t jadel-chatbot-eval:${TARGET_SHA} .
+      - name: Run held-out Nemotron evaluation
+        id: eval
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_MODEL: ${{ env.EVAL_MODEL }}
+          MIN_EVAL_PASS_RATE: ${{ env.EVAL_MIN_PASS_RATE }}
+        run: |
+          set -u
+          if [ -z "${NVIDIA_API_KEY}" ]; then
+            echo 'NVIDIA_API_KEY is not configured for the model-evaluation environment' >&2
+            exit 2
+          fi
+          mkdir -p eval-results
+          set +e
+          docker run --name jadel-chatbot-trusted-eval \
+            -e NVIDIA_API_KEY \
+            -e NVIDIA_MODEL \
+            -e MIN_EVAL_PASS_RATE \
+            -e GITHUB_SHA="${TARGET_SHA}" \
+            jadel-chatbot-eval:${TARGET_SHA} \
+            python -m scripts.run_model_eval --output /tmp/eval-report.json
+          eval_code=$?
+          set -e
+          docker cp jadel-chatbot-trusted-eval:/tmp/eval-report.json eval-results/report.json || true
+          docker rm -f jadel-chatbot-trusted-eval >/dev/null 2>&1 || true
+          exit ${eval_code}
+      - name: Upload immutable evaluation report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: trusted-model-eval-${{ env.TARGET_SHA }}
+          path: eval-results/report.json
+          if-no-files-found: warn
+          retention-days: 30
