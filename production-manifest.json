@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.3",
+  "schema_version": "1.4",
   "system": "jadel-chatbot",
   "repository": "jadeldiaz01-png/chatbot",
   "baseline_sha": "27d6c202905d73dd417c38c75c083ade5ae26278",
@@ -48,7 +48,24 @@
       "runner": "scripts/run_model_eval.py",
       "workflow": ".github/workflows/model-eval.yml",
       "automatic_promotion_allowed": false,
-      "human_review_required": true
+      "human_review_required": true,
+      "stage_latency_instrumentation": true,
+      "retry_attempt_instrumentation": true,
+      "request_metadata_fields": [
+        "stage",
+        "request_model",
+        "max_tokens",
+        "latency_seconds",
+        "http_attempts",
+        "retries",
+        "status_codes",
+        "request_ids",
+        "configured_timeout_seconds",
+        "configured_max_retries",
+        "response_id",
+        "response_model"
+      ],
+      "request_payload_logging": false
     }
   },
   "capabilities": {
