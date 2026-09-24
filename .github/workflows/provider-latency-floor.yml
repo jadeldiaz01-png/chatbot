@@ -56,6 +56,10 @@ jobs:
               "first_content_seconds",
               "total_seconds",
               "retries",
+              "REQUEST_TIMEOUT_SECONDS = 15.0",
+              "MAX_RETRIES = 0",
+              "math.isfinite(args.slo_seconds)",
+              "complete=False",
           )
           missing = [item for item in required if item not in text]
           if missing:
@@ -79,24 +83,39 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Install locked runtime dependencies
-        run: python -m pip install --only-binary=:all: --require-hashes -r requirements.lock
+      - name: Build pinned Python 3.12 probe runtime
+        run: docker build --pull -t jadel-chatbot-provider-probe:${GITHUB_SHA} .
       - name: Run isolated NVIDIA provider latency-floor probe
         id: probe
         shell: bash
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
-          set -euo pipefail
+          set -u
           if [ -z "${NVIDIA_API_KEY}" ]; then
             echo 'NVIDIA_API_KEY is not configured for the model-evaluation environment' >&2
             exit 2
           fi
           [[ "${PROBE_REPETITIONS}" =~ ^[0-9]+$ ]]
-          python scripts/provider_latency_floor_probe.py \
-            --repetitions "${PROBE_REPETITIONS}" \
-            --slo-seconds "${PROBE_SLO_SECONDS}" \
-            --output provider-probe/report.json
+          mkdir -p provider-probe
+
+          set +e
+          docker run --name jadel-chatbot-provider-probe \
+            -e NVIDIA_API_KEY \
+            -e GITHUB_SHA="${GITHUB_SHA}" \
+            jadel-chatbot-provider-probe:${GITHUB_SHA} \
+            python scripts/provider_latency_floor_probe.py \
+              --repetitions "${PROBE_REPETITIONS}" \
+              --slo-seconds "${PROBE_SLO_SECONDS}" \
+              --output /tmp/provider-probe-report.json
+          probe_code=$?
+          set -e
+
+          docker cp \
+            jadel-chatbot-provider-probe:/tmp/provider-probe-report.json \
+            provider-probe/report.json || true
+          docker rm -f jadel-chatbot-provider-probe >/dev/null 2>&1 || true
+          exit "${probe_code}"
       - name: Upload immutable provider probe report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
