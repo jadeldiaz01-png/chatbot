@@ -58,7 +58,7 @@ Do not commit `.env`, API keys or other credentials.
 | `ENABLE_MULTIMODAL` | `false` | Must remain false for the text-only Ultra baseline |
 | `MAX_INPUT_CHARS` | `4000` | Per-turn input bound |
 | `MAX_HISTORY_MESSAGES` | `20` | In-session context bound |
-| `MAX_OUTPUT_TOKENS` | `1024` | Per-response output budget |
+| `MAX_OUTPUT_TOKENS` | `512` | Isolated latency candidate: per-response output budget |
 | `NVIDIA_TIMEOUT_SECONDS` | `45` | Request timeout |
 | `NVIDIA_MAX_RETRIES` | `2` | SDK retry bound |
 | `SESSION_REQUESTS_PER_MINUTE` | `10` | Per-session soft throttle |
