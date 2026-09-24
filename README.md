@@ -1,24 +1,32 @@
 # Jadel Tech RD Assistant
 
-Production-oriented Streamlit assistant for Jadel Tech RD using the OpenAI Responses API.
+Production-oriented Streamlit assistant for Jadel Tech RD using NVIDIA NIM with Nemotron 3 Ultra.
 
 ## Current baseline
 
-- Server-side OpenAI credential only.
-- Stateless API calls with `store=false` by default.
-- Input/output moderation enabled by default.
-- Likely credential redaction before model calls.
+- Main model: `nvidia/nemotron-3-ultra-550b-a55b`.
+- NVIDIA hosted NIM endpoint: `https://integrate.api.nvidia.com/v1`.
+- Dedicated input/output safety model: `nvidia/nemotron-3.5-content-safety`.
+- Server-side `NVIDIA_API_KEY` only; the runtime has no `OPENAI_API_KEY` dependency.
+- The Python `openai` package is retained only as an OpenAI-compatible protocol client for NVIDIA NIM; the runtime does not target `api.openai.com`.
+- Reasoning is enabled for Nemotron Ultra, but reasoning traces are not exposed to the UI or application logs.
+- Likely credential redaction before model calls, including NVIDIA `nvapi-` keys.
 - Bounded input, history, output tokens, timeout and retries.
 - Session-level soft throttling.
+- Multimodal input is fail-closed because this Nemotron Ultra baseline is text-only.
 - Non-root container with healthcheck.
 - Linux/amd64 CPython 3.12 runtime and CI dependency graphs are versioned with SHA-256 hashes.
 - Docker production/CI installation uses `pip --require-hashes --only-binary=:all:`.
 - A read-only lock-drift workflow regenerates both graphs and fails on byte differences.
 - Policy/config/manifest tests, Ruff and dependency audit in CI.
 - Release-evidence workflow with SHA-pinned GitHub Actions, CycloneDX SBOM and provenance/SBOM attestation.
-- Advanced capabilities are fail-closed: multimodal is implemented behind a disabled feature flag; RAG, ML/DL and autonomous tools require explicit evidence gates.
+- RAG, ML/DL and autonomous tools remain fail-closed behind independent evidence gates.
 
 The canonical machine-readable state is [`production-manifest.json`](production-manifest.json). `production_status` remains `NOT_CERTIFIED` until the blocking evidence in that manifest exists for an exact commit SHA.
+
+## Provider data-handling gate
+
+The NVIDIA Build trial endpoint may record API inputs and outputs. Therefore this repository treats the hosted trial endpoint as **not approved for sensitive production data**. Production promotion requires a privacy/data-handling review and, when appropriate, a partner or self-hosted NIM endpoint with acceptable retention terms.
 
 ## Local run
 
@@ -28,7 +36,7 @@ For ordinary cross-platform development, install the direct requirements:
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
-export OPENAI_API_KEY='set-this-in-your-shell-or-secret-manager'
+export NVIDIA_API_KEY='set-this-in-your-shell-or-secret-manager'
 streamlit run streamlit_app.py
 ```
 
@@ -40,17 +48,19 @@ Do not commit `.env`, API keys or other credentials.
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `OPENAI_MODEL` | `gpt-5.6-luna` | Evaluated production model; change only with model-quality evidence |
-| `OPENAI_MODERATION_MODEL` | `omni-moderation-latest` | Input/output moderation model |
-| `OPENAI_RESPONSE_STORE` | `false` | Whether API response state may be stored |
-| `ENABLE_MODERATION` | `true` | Fail-safe content moderation switch |
-| `ENABLE_MULTIMODAL` | `false` | Gated image-input capability |
+| `NVIDIA_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | Main evaluated model |
+| `NVIDIA_SAFETY_MODEL` | `nvidia/nemotron-3.5-content-safety` | Input/output content-safety model |
+| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | NVIDIA NIM API endpoint |
+| `NVIDIA_ENABLE_THINKING` | `true` | Enable Nemotron reasoning internally |
+| `NVIDIA_TEMPERATURE` | `1.0` | Main-model sampling temperature |
+| `NVIDIA_TOP_P` | `0.95` | Main-model nucleus sampling |
+| `ENABLE_MODERATION` | `true` | Fail-safe NVIDIA safety moderation |
+| `ENABLE_MULTIMODAL` | `false` | Must remain false for the text-only Ultra baseline |
 | `MAX_INPUT_CHARS` | `4000` | Per-turn input bound |
 | `MAX_HISTORY_MESSAGES` | `20` | In-session context bound |
-| `MAX_OUTPUT_TOKENS` | `800` | Per-response output budget |
-| `OPENAI_TIMEOUT_SECONDS` | `30` | Request timeout |
-| `OPENAI_MAX_RETRIES` | `2` | SDK retry bound |
+| `MAX_OUTPUT_TOKENS` | `1024` | Per-response output budget |
+| `NVIDIA_TIMEOUT_SECONDS` | `45` | Request timeout |
+| `NVIDIA_MAX_RETRIES` | `2` | SDK retry bound |
 | `SESSION_REQUESTS_PER_MINUTE` | `10` | Per-session soft throttle |
-| `MAX_IMAGE_BYTES` | `5242880` | Image bound when multimodal is enabled |
 
 For architecture, risk, evaluation, data/ML and operations details, see `docs/`.
