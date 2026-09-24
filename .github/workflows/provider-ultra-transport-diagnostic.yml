@@ -56,7 +56,9 @@ jobs:
               "stream=False",
               "REQUEST_TIMEOUT_SECONDS = 15.0",
               "MAX_RETRIES = 0",
-              "paired_sequential_alternating_order",
+              "PACING_SECONDS = 12.0",
+              "paired_sequential_alternating_order_paced",
+              "pacing_seconds_before_call",
               "response_headers_seconds",
               "first_content_seconds",
               "complete=False",
@@ -87,7 +89,7 @@ jobs:
           persist-credentials: false
       - name: Build pinned Python 3.12 diagnostic runtime
         run: docker build --pull -t jadel-chatbot-ultra-transport-diagnostic:${GITHUB_SHA} .
-      - name: Run paired Ultra streaming vs non-streaming diagnostic
+      - name: Run paced paired Ultra streaming vs non-streaming diagnostic
         id: diagnostic
         shell: bash
         env:
