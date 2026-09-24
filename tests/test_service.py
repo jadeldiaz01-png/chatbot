@@ -114,6 +114,21 @@ class ServiceTests(unittest.TestCase):
 
         self.assertEqual(client.chat.completions.calls, [])
 
+    def test_blocked_response_is_bilingual_and_denies_execution(self) -> None:
+        service, client = self.make_service()
+        service._is_flagged = lambda *_args, **_kwargs: True
+
+        result = service.generate(
+            [{"role": "user", "content": "Change my production account."}],
+            current_user_text="Change my production account.",
+        )
+
+        self.assertTrue(result.blocked_by_moderation)
+        self.assertIn("I cannot", result.text)
+        self.assertIn("No puedo", result.text)
+        self.assertIn("execute", result.text)
+        self.assertEqual(client.chat.completions.calls, [])
+
     def test_unrecognized_safety_verdict_fails_closed(self) -> None:
         with self.assertRaises(RuntimeError):
             AIService._safety_verdict("unknown", "User Safety")
