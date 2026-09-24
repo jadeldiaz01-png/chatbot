@@ -14,15 +14,24 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(tools["state"], "disabled")
         self.assertFalse(tools["write_actions"])
 
-    def test_response_storage_is_disabled(self) -> None:
-        self.assertFalse(self.manifest["ai"]["response_store"])
+    def test_openai_platform_runtime_is_disabled(self) -> None:
+        controls = self.manifest["ai"]["provider_data_controls"]
+        self.assertFalse(controls["openai_platform_runtime_enabled"])
+        self.assertFalse(controls["openai_api_key_runtime_reference"])
+        self.assertEqual(self.manifest["ai"]["provider"], "nvidia_nim")
+
+    def test_trial_endpoint_blocks_sensitive_data(self) -> None:
+        controls = self.manifest["ai"]["provider_data_controls"]
+        self.assertTrue(controls["nvidia_trial_endpoint_may_record_inputs_outputs"])
+        self.assertFalse(controls["sensitive_data_allowed_on_trial_endpoint"])
+        self.assertTrue(controls["production_privacy_review_required"])
 
     def test_release_requires_human_approval(self) -> None:
         self.assertEqual(
             self.manifest["release_gates"]["human_merge_approval"], "required"
         )
 
-    def test_advanced_capabilities_are_gated(self) -> None:
+    def test_advanced_capabilities_are_fail_closed(self) -> None:
         capabilities = self.manifest["capabilities"]
         for name in (
             "multimodal_image_input",
@@ -30,7 +39,10 @@ class ManifestTests(unittest.TestCase):
             "ml_ranking",
             "deep_learning_or_finetuning",
         ):
-            self.assertIn(capabilities[name]["state"], {"gated", "research_only"})
+            self.assertIn(
+                capabilities[name]["state"],
+                {"disabled", "gated", "research_only"},
+            )
             self.assertFalse(capabilities[name]["default_enabled"])
 
 
