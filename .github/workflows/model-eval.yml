@@ -15,9 +15,9 @@ on:
   workflow_dispatch:
     inputs:
       model:
-        description: Model ID to evaluate
+        description: NVIDIA NIM model ID to evaluate
         required: true
-        default: gpt-5.6-luna
+        default: nvidia/nemotron-3-ultra-550b-a55b
         type: string
       min_pass_rate:
         description: Minimum automated pass rate (human review is still required)
@@ -35,11 +35,11 @@ concurrency:
 jobs:
   evaluate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment: model-evaluation
     env:
       SOURCE_SHA: ${{ github.sha }}
-      EVAL_MODEL: ${{ inputs.model || 'gpt-5.6-luna' }}
+      EVAL_MODEL: ${{ inputs.model || 'nvidia/nemotron-3-ultra-550b-a55b' }}
       EVAL_MIN_PASS_RATE: ${{ inputs.min_pass_rate || '0.90' }}
     steps:
       - name: Checkout exact source revision
@@ -52,24 +52,24 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
       - name: Build evaluated runtime
         run: docker build --pull --target runtime -t jadel-chatbot-eval:${SOURCE_SHA} .
-      - name: Run held-out model evaluation
+      - name: Run held-out Nemotron evaluation
         id: eval
         shell: bash
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ env.EVAL_MODEL }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_MODEL: ${{ env.EVAL_MODEL }}
           MIN_EVAL_PASS_RATE: ${{ env.EVAL_MIN_PASS_RATE }}
         run: |
           set -u
-          if [ -z "${OPENAI_API_KEY}" ]; then
-            echo 'OPENAI_API_KEY is not configured for the model-evaluation environment' >&2
+          if [ -z "${NVIDIA_API_KEY}" ]; then
+            echo 'NVIDIA_API_KEY is not configured for the model-evaluation environment' >&2
             exit 2
           fi
           mkdir -p eval-results
           set +e
           docker run --name jadel-chatbot-model-eval \
-            -e OPENAI_API_KEY \
-            -e OPENAI_MODEL \
+            -e NVIDIA_API_KEY \
+            -e NVIDIA_MODEL \
             -e MIN_EVAL_PASS_RATE \
             -e GITHUB_SHA="${SOURCE_SHA}" \
             jadel-chatbot-eval:${SOURCE_SHA} \
