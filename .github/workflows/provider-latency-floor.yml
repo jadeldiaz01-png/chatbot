@@ -1,0 +1,107 @@
+name: provider-latency-floor
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/provider_latency_floor_probe.py'
+      - '.github/workflows/provider-latency-floor.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/provider_latency_floor_probe.py'
+      - '.github/workflows/provider-latency-floor.yml'
+  workflow_dispatch:
+    inputs:
+      repetitions:
+        description: Sequential repetitions per model
+        required: true
+        default: '10'
+        type: string
+      slo_seconds:
+        description: Total-latency p95 SLO in seconds
+        required: true
+        default: '8.0'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-latency-floor
+  cancel-in-progress: false
+
+jobs:
+  validate-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validate probe source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/provider_latency_floor_probe.py
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path("scripts/provider_latency_floor_probe.py").read_text(encoding="utf-8")
+          required = (
+              "nvidia/nemotron-3-ultra-550b-a55b",
+              "nvidia/nemotron-3.5-content-safety",
+              "https://integrate.api.nvidia.com/v1",
+              "response_headers_seconds",
+              "first_content_seconds",
+              "total_seconds",
+              "retries",
+          )
+          missing = [item for item in required if item not in text]
+          if missing:
+              raise SystemExit(f"missing probe contract markers: {missing}")
+          if "api_key =" not in text or "NVIDIA_API_KEY" not in text:
+              raise SystemExit("probe must consume NVIDIA_API_KEY from environment")
+          print("PROVIDER_LATENCY_PROBE_SOURCE=PASS")
+          PY
+
+  provider-latency-floor:
+    if: github.event_name != 'pull_request'
+    needs: validate-probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: model-evaluation
+    env:
+      PROBE_REPETITIONS: ${{ inputs.repetitions || '10' }}
+      PROBE_SLO_SECONDS: ${{ inputs.slo_seconds || '8.0' }}
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install locked runtime dependencies
+        run: python -m pip install --only-binary=:all: --require-hashes -r requirements.lock
+      - name: Run isolated NVIDIA provider latency-floor probe
+        id: probe
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NVIDIA_API_KEY}" ]; then
+            echo 'NVIDIA_API_KEY is not configured for the model-evaluation environment' >&2
+            exit 2
+          fi
+          [[ "${PROBE_REPETITIONS}" =~ ^[0-9]+$ ]]
+          python scripts/provider_latency_floor_probe.py \
+            --repetitions "${PROBE_REPETITIONS}" \
+            --slo-seconds "${PROBE_SLO_SECONDS}" \
+            --output provider-probe/report.json
+      - name: Upload immutable provider probe report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: provider-latency-floor-${{ github.sha }}
+          path: provider-probe/report.json
+          if-no-files-found: warn
+          retention-days: 30
