@@ -55,14 +55,28 @@ class AIService:
             http_client=http_client,
         )
 
+    def _ensure_instrumentation_state(self) -> None:
+        if not hasattr(self, "_active_stage"):
+            self._active_stage = None
+        if not hasattr(self, "_attempt_counts"):
+            self._attempt_counts = {}
+        if not hasattr(self, "_status_codes"):
+            self._status_codes = {}
+        if not hasattr(self, "_request_ids"):
+            self._request_ids = {}
+        if not hasattr(self, "last_error_stage_metrics"):
+            self.last_error_stage_metrics = {}
+
     def _record_http_attempt(self, _request: Any) -> None:
-        stage = getattr(self, "_active_stage", None)
+        self._ensure_instrumentation_state()
+        stage = self._active_stage
         if stage is None:
             return
         self._attempt_counts[stage] = self._attempt_counts.get(stage, 0) + 1
 
     def _record_http_response(self, response: Any) -> None:
-        stage = getattr(self, "_active_stage", None)
+        self._ensure_instrumentation_state()
+        stage = self._active_stage
         if stage is None:
             return
 
@@ -114,6 +128,7 @@ class AIService:
         stage: str,
         **request: Any,
     ) -> tuple[Any, dict[str, Any]]:
+        self._ensure_instrumentation_state()
         self._attempt_counts[stage] = 0
         self._status_codes[stage] = []
         self._request_ids[stage] = []
@@ -269,6 +284,7 @@ class AIService:
         if image_data_url is not None:
             raise ValueError("Nemotron 3 Ultra production baseline is text-only")
 
+        self._ensure_instrumentation_state()
         self.last_error_stage_metrics = {}
         stage_metrics: dict[str, dict[str, Any]] = {}
         if self._is_flagged(
