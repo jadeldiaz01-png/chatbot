@@ -15,6 +15,8 @@ from jadel_chatbot.prompts import PROMPT_VERSION
 from jadel_chatbot.security import redact_likely_secrets
 from jadel_chatbot.service import AIService
 
+STAGES = ("input_safety", "main_model", "output_safety")
+
 
 def percentile(values: list[float], percentile_value: float) -> float | None:
     if not values:
@@ -58,6 +60,10 @@ def safe_error_metadata(exc: Exception) -> dict[str, Any]:
             if isinstance(remote_type, str) and remote_type:
                 metadata["remote_error_type"] = remote_type
 
+    stage_metrics = getattr(exc, "stage_metrics", None)
+    if isinstance(stage_metrics, dict):
+        metadata["stage_metrics"] = stage_metrics
+
     return metadata
 
 
@@ -88,6 +94,7 @@ def evaluate_case(service: AIService, case: dict[str, Any]) -> dict[str, Any]:
             "redaction_detected_types": list(redaction.detected_types),
             "blocked_by_moderation": result.blocked_by_moderation,
             "latency_seconds": round(latency_seconds, 4),
+            "stage_metrics": result.stage_metrics or {},
             "response_id": result.response_id,
             "model": result.model,
             "input_tokens": result.input_tokens,
@@ -107,6 +114,44 @@ def evaluate_case(service: AIService, case: dict[str, Any]) -> dict[str, Any]:
             "latency_seconds": round(time.perf_counter() - started, 4),
             **safe_error_metadata(exc),
         }
+
+
+def stage_summary(results: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    for stage in STAGES:
+        entries: list[dict[str, Any]] = []
+        for item in results:
+            metrics = item.get("stage_metrics")
+            if not isinstance(metrics, dict):
+                continue
+            value = metrics.get(stage)
+            if isinstance(value, dict) and not value.get("skipped", False):
+                entries.append(value)
+
+        latencies = [
+            float(entry["latency_seconds"])
+            for entry in entries
+            if isinstance(entry.get("latency_seconds"), (int, float))
+        ]
+        attempts = [
+            int(entry["http_attempts"])
+            for entry in entries
+            if isinstance(entry.get("http_attempts"), int)
+        ]
+        retries = [
+            int(entry["retries"])
+            for entry in entries
+            if isinstance(entry.get("retries"), int)
+        ]
+        summary[stage] = {
+            "observed_cases": len(entries),
+            "p50_latency_seconds": percentile(latencies, 0.50),
+            "p95_latency_seconds": percentile(latencies, 0.95),
+            "total_http_attempts": sum(attempts),
+            "total_retries": sum(retries),
+            "retried_cases": sum(1 for value in retries if value > 0),
+        }
+    return summary
 
 
 def parse_args() -> argparse.Namespace:
@@ -174,7 +219,7 @@ def main() -> int:
         evaluation_status = "PASS"
 
     report = {
-        "schema_version": "1.2",
+        "schema_version": "1.3",
         "created_at": datetime.now(UTC).isoformat(),
         "git_sha": os.getenv("GITHUB_SHA", "local"),
         "provider": config.provider,
@@ -182,6 +227,9 @@ def main() -> int:
         "model": config.model,
         "safety_model": config.safety_model,
         "reasoning_enabled": config.enable_thinking,
+        "max_output_tokens": config.max_output_tokens,
+        "configured_timeout_seconds": config.timeout_seconds,
+        "configured_max_retries": config.max_retries,
         "prompt_version": PROMPT_VERSION,
         "case_set_sha256": hashlib.sha256(raw_cases).hexdigest(),
         "human_review_required": True,
@@ -205,12 +253,14 @@ def main() -> int:
                         "request_id",
                         "remote_error_code",
                         "remote_error_type",
+                        "stage_metrics",
                     )
                     if key in item
                 }
                 for item in infrastructure_failures
             ],
             "p95_latency_seconds": percentile(latencies, 0.95),
+            "stage_latency": stage_summary(results),
             "total_tokens_observed": sum(token_totals) if token_totals else None,
             "min_pass_rate": args.min_pass_rate,
         },
