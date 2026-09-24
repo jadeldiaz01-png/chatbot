@@ -26,6 +26,37 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
           echo "SOURCE_SHA=${SOURCE_SHA}"
+      - name: Enforce NVIDIA-only provider boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          forbidden = (
+              "OPENAI" + "_API_KEY",
+              "OPENAI" + "_MODEL",
+              "api." + "openai.com",
+          )
+          targets = (
+              Path("jadel_chatbot/config.py"),
+              Path("jadel_chatbot/service.py"),
+              Path("streamlit_app.py"),
+              Path(".github/workflows/runtime-container-ci.yml"),
+              Path(".github/workflows/model-eval.yml"),
+          )
+
+          violations = []
+          for path in targets:
+              content = path.read_text(encoding="utf-8")
+              for token in forbidden:
+                  if token in content:
+                      violations.append(f"{path}: forbidden provider token {token}")
+
+          if violations:
+              raise SystemExit("\n".join(violations))
+          print("NVIDIA_PROVIDER_BOUNDARY=PASS")
+          PY
       - name: Build test target and run policy/security checks
         run: docker build --pull --target test -t jadel-chatbot-test:${SOURCE_SHA} .
       - name: Build runtime container
