@@ -61,14 +61,14 @@ def make_config() -> AppConfig:
         safety_model="nvidia/nemotron-3.5-content-safety",
         max_input_chars=4000,
         max_history_messages=20,
-        max_output_tokens=1024,
+        max_output_tokens=512,
         timeout_seconds=45.0,
         max_retries=2,
         session_requests_per_minute=10,
         moderation_enabled=True,
         multimodal_enabled=False,
         max_image_bytes=1024,
-        enable_thinking=True,
+        enable_thinking=False,
         temperature=1.0,
         top_p=0.95,
     )
@@ -96,11 +96,30 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(calls[0]["model"], "nvidia/nemotron-3.5-content-safety")
         self.assertEqual(calls[1]["model"], "nvidia/nemotron-3-ultra-550b-a55b")
         self.assertEqual(calls[2]["model"], "nvidia/nemotron-3.5-content-safety")
-        self.assertTrue(
+        self.assertFalse(
             calls[1]["extra_body"]["chat_template_kwargs"]["enable_thinking"]
         )
-        self.assertEqual(calls[1]["max_tokens"], 1024)
+        self.assertEqual(calls[1]["max_tokens"], 512)
         self.assertEqual(calls[1]["messages"][0]["role"], "system")
+
+        self.assertIsNotNone(result.stage_metrics)
+        assert result.stage_metrics is not None
+        self.assertEqual(
+            set(result.stage_metrics),
+            {"input_safety", "main_model", "output_safety"},
+        )
+        for stage in ("input_safety", "main_model", "output_safety"):
+            self.assertGreaterEqual(
+                result.stage_metrics[stage]["latency_seconds"],
+                0.0,
+            )
+            self.assertEqual(result.stage_metrics[stage]["http_attempts"], 1)
+            self.assertEqual(result.stage_metrics[stage]["retries"], 0)
+        self.assertEqual(
+            result.stage_metrics["main_model"]["request_model"],
+            "nvidia/nemotron-3-ultra-550b-a55b",
+        )
+        self.assertEqual(result.stage_metrics["main_model"]["max_tokens"], 512)
 
     def test_text_only_boundary_fails_before_any_api_call(self) -> None:
         service, client = self.make_service()
@@ -128,6 +147,46 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("No puedo", result.text)
         self.assertIn("execute", result.text)
         self.assertEqual(client.chat.completions.calls, [])
+
+    def test_http_hooks_count_retries_without_recording_payloads(self) -> None:
+        service, _client = self.make_service()
+        service._active_stage = "main_model"
+        service._attempt_counts = {"main_model": 0}
+        service._status_codes = {"main_model": []}
+        service._request_ids = {"main_model": []}
+
+        service._record_http_attempt(object())
+        service._record_http_response(
+            SimpleNamespace(
+                status_code=503,
+                headers={"x-request-id": "req_retry"},
+            )
+        )
+        service._record_http_attempt(object())
+        service._record_http_response(
+            SimpleNamespace(
+                status_code=200,
+                headers={"x-request-id": "req_success"},
+            )
+        )
+
+        metrics = service._finalize_stage_metrics(
+            "main_model",
+            request={
+                "model": "nvidia/nemotron-3-ultra-550b-a55b",
+                "max_tokens": 512,
+            },
+            latency_seconds=1.25,
+            completion=SimpleNamespace(
+                id="resp_test",
+                model="nvidia/nemotron-3-ultra-550b-a55b",
+            ),
+        )
+
+        self.assertEqual(metrics["http_attempts"], 2)
+        self.assertEqual(metrics["retries"], 1)
+        self.assertEqual(metrics["status_codes"], [503, 200])
+        self.assertEqual(metrics["request_ids"], ["req_retry", "req_success"])
 
     def test_unrecognized_safety_verdict_fails_closed(self) -> None:
         with self.assertRaises(RuntimeError):
