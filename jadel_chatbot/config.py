@@ -2,6 +2,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from urllib.parse import urlparse
+
+
+NVIDIA_DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
+NVIDIA_DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
+NVIDIA_DEFAULT_SAFETY_MODEL = "nvidia/nemotron-3.5-content-safety"
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -32,29 +38,49 @@ def _env_float(name: str, default: float, *, minimum: float, maximum: float) -> 
     return value
 
 
+def _nvidia_base_url() -> str:
+    value = os.getenv("NVIDIA_BASE_URL", NVIDIA_DEFAULT_BASE_URL).strip().rstrip("/")
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError("NVIDIA_BASE_URL must be an absolute HTTPS URL")
+    return value
+
+
 @dataclass(frozen=True)
 class AppConfig:
     api_key: str
+    api_base_url: str
+    provider: str
     model: str
-    moderation_model: str
+    safety_model: str
     max_input_chars: int
     max_history_messages: int
     max_output_tokens: int
     timeout_seconds: float
     max_retries: int
     session_requests_per_minute: int
-    response_store: bool
     moderation_enabled: bool
     multimodal_enabled: bool
     max_image_bytes: int
+    enable_thinking: bool
+    temperature: float
+    top_p: float
 
     @classmethod
     def from_env(cls) -> AppConfig:
+        multimodal_enabled = _env_bool("ENABLE_MULTIMODAL", False)
+        if multimodal_enabled:
+            raise ValueError(
+                "ENABLE_MULTIMODAL cannot be enabled with the text-only Nemotron 3 Ultra baseline"
+            )
+
         return cls(
-            api_key=os.getenv("OPENAI_API_KEY", "").strip(),
-            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna").strip(),
-            moderation_model=os.getenv(
-                "OPENAI_MODERATION_MODEL", "omni-moderation-latest"
+            api_key=os.getenv("NVIDIA_API_KEY", "").strip(),
+            api_base_url=_nvidia_base_url(),
+            provider="nvidia_nim",
+            model=os.getenv("NVIDIA_MODEL", NVIDIA_DEFAULT_MODEL).strip(),
+            safety_model=os.getenv(
+                "NVIDIA_SAFETY_MODEL", NVIDIA_DEFAULT_SAFETY_MODEL
             ).strip(),
             max_input_chars=_env_int(
                 "MAX_INPUT_CHARS", 4000, minimum=128, maximum=20000
@@ -63,22 +89,26 @@ class AppConfig:
                 "MAX_HISTORY_MESSAGES", 20, minimum=2, maximum=100
             ),
             max_output_tokens=_env_int(
-                "MAX_OUTPUT_TOKENS", 800, minimum=64, maximum=8192
+                "MAX_OUTPUT_TOKENS", 1024, minimum=64, maximum=16384
             ),
             timeout_seconds=_env_float(
-                "OPENAI_TIMEOUT_SECONDS", 30.0, minimum=1.0, maximum=120.0
+                "NVIDIA_TIMEOUT_SECONDS", 45.0, minimum=1.0, maximum=180.0
             ),
-            max_retries=_env_int("OPENAI_MAX_RETRIES", 2, minimum=0, maximum=5),
+            max_retries=_env_int("NVIDIA_MAX_RETRIES", 2, minimum=0, maximum=5),
             session_requests_per_minute=_env_int(
                 "SESSION_REQUESTS_PER_MINUTE", 10, minimum=1, maximum=60
             ),
-            response_store=_env_bool("OPENAI_RESPONSE_STORE", False),
             moderation_enabled=_env_bool("ENABLE_MODERATION", True),
-            multimodal_enabled=_env_bool("ENABLE_MULTIMODAL", False),
+            multimodal_enabled=multimodal_enabled,
             max_image_bytes=_env_int(
                 "MAX_IMAGE_BYTES",
                 5 * 1024 * 1024,
                 minimum=1024,
                 maximum=20 * 1024 * 1024,
             ),
+            enable_thinking=_env_bool("NVIDIA_ENABLE_THINKING", True),
+            temperature=_env_float(
+                "NVIDIA_TEMPERATURE", 1.0, minimum=0.0, maximum=2.0
+            ),
+            top_p=_env_float("NVIDIA_TOP_P", 0.95, minimum=0.01, maximum=1.0),
         )
