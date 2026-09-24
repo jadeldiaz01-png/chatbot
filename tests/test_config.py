@@ -3,10 +3,10 @@ import unittest
 from unittest.mock import patch
 
 from jadel_chatbot.config import (
-    AppConfig,
     NVIDIA_DEFAULT_BASE_URL,
     NVIDIA_DEFAULT_MODEL,
     NVIDIA_DEFAULT_SAFETY_MODEL,
+    AppConfig,
 )
 
 
