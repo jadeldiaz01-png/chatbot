@@ -105,7 +105,7 @@ class AppConfig:
                 minimum=1024,
                 maximum=20 * 1024 * 1024,
             ),
-            enable_thinking=_env_bool("NVIDIA_ENABLE_THINKING", True),
+            enable_thinking=_env_bool("NVIDIA_ENABLE_THINKING", False),
             temperature=_env_float(
                 "NVIDIA_TEMPERATURE", 1.0, minimum=0.0, maximum=2.0
             ),
