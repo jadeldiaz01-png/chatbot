@@ -60,6 +60,12 @@ jobs:
               "paired_sequential_alternating_order_paced",
               "pacing_seconds_before_call",
               "response_headers_seconds",
+              "response_content_types",
+              "error_response_content_type",
+              "error_code",
+              "error_phase",
+              "stream_events_observed",
+              "stream_content_chunks_observed",
               "first_content_seconds",
               "complete=False",
               "chatbot_functional_configuration_changed",
@@ -70,6 +76,12 @@ jobs:
               raise SystemExit(f"missing Ultra transport diagnostic markers: {missing}")
           if "NVIDIA_API_KEY" not in text:
               raise SystemExit("diagnostic must consume NVIDIA_API_KEY from environment")
+          forbidden = ("str(exc)", "error_message")
+          present_forbidden = [item for item in forbidden if item in text]
+          if present_forbidden:
+              raise SystemExit(
+                  f"unsafe error payload markers present: {present_forbidden}"
+              )
           print("PROVIDER_ULTRA_TRANSPORT_DIAGNOSTIC_SOURCE=PASS")
           PY
 
