@@ -13,12 +13,13 @@ from typing import Any
 from openai import DefaultHttpxClient, OpenAI
 
 DIAGNOSTIC_SCHEMA_VERSION = "1.0"
-DIAGNOSTIC_SPEC_VERSION = "2026-09-24.1"
+DIAGNOSTIC_SPEC_VERSION = "2026-09-24.2"
 API_BASE_URL = "https://integrate.api.nvidia.com/v1"
 ULTRA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 REQUEST_ID_HEADERS = ("x-request-id", "x-nvidia-request-id", "request-id")
 REQUEST_TIMEOUT_SECONDS = 15.0
 MAX_RETRIES = 0
+PACING_SECONDS = 12.0
 MODES = ("stream", "nonstream")
 
 
@@ -398,7 +399,8 @@ def build_report(
         "api_base_url": API_BASE_URL,
         "model": ULTRA_MODEL,
         "repetitions_per_mode": repetitions,
-        "execution_mode": "paired_sequential_alternating_order",
+        "execution_mode": "paired_sequential_alternating_order_paced",
+        "configured_pacing_seconds": PACING_SECONDS,
         "quality_evaluation": False,
         "chatbot_functional_configuration_changed": False,
         "complete": complete,
@@ -476,9 +478,19 @@ def main() -> int:
         ),
     )
 
+    call_index = 0
     for round_number in range(1, args.repetitions + 1):
         order = MODES if round_number % 2 else tuple(reversed(MODES))
         for order_in_round, mode in enumerate(order, start=1):
+            pacing_seconds_before_call = 0.0
+            if call_index:
+                pacing_started = time.perf_counter()
+                time.sleep(PACING_SECONDS)
+                pacing_seconds_before_call = round(
+                    time.perf_counter() - pacing_started,
+                    4,
+                )
+
             if mode == "stream":
                 result = run_stream_call(
                     client,
@@ -493,7 +505,9 @@ def main() -> int:
                     round_number=round_number,
                     order_in_round=order_in_round,
                 )
+            result["pacing_seconds_before_call"] = pacing_seconds_before_call
             results.append(result)
+            call_index += 1
             write_report(
                 output_path,
                 build_report(
