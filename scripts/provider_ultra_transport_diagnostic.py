@@ -13,7 +13,7 @@ from typing import Any
 from openai import DefaultHttpxClient, OpenAI
 
 DIAGNOSTIC_SCHEMA_VERSION = "1.0"
-DIAGNOSTIC_SPEC_VERSION = "2026-09-24.2"
+DIAGNOSTIC_SPEC_VERSION = "2026-09-25.1"
 API_BASE_URL = "https://integrate.api.nvidia.com/v1"
 ULTRA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 REQUEST_ID_HEADERS = ("x-request-id", "x-nvidia-request-id", "request-id")
@@ -42,6 +42,7 @@ class RequestTracker:
             "attempts": 0,
             "status_codes": [],
             "request_ids": [],
+            "response_content_types": [],
             "response_headers_seconds": None,
         }
 
@@ -66,6 +67,16 @@ class RequestTracker:
         headers = getattr(response, "headers", None)
         if headers is None:
             return
+
+        content_type = headers.get("content-type")
+        if isinstance(content_type, str) and content_type:
+            normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+            if (
+                normalized_content_type
+                and normalized_content_type not in self.current["response_content_types"]
+            ):
+                self.current["response_content_types"].append(normalized_content_type)
+
         for header in REQUEST_ID_HEADERS:
             value = headers.get(header)
             if isinstance(value, str) and value:
@@ -85,6 +96,7 @@ class RequestTracker:
             "retries": max(attempts - 1, 0),
             "status_codes": list(data["status_codes"]),
             "request_ids": list(data["request_ids"]),
+            "response_content_types": list(data["response_content_types"]),
         }
 
 
@@ -123,12 +135,38 @@ def extract_nonstream_content(response: Any) -> str:
 
 def safe_error_metadata(exc: Exception) -> dict[str, Any]:
     item: dict[str, Any] = {"error_type": type(exc).__name__}
+
     status_code = getattr(exc, "status_code", None)
     if isinstance(status_code, int):
         item["status_code"] = status_code
+
     request_id = getattr(exc, "request_id", None)
     if isinstance(request_id, str) and request_id:
         item["request_id"] = request_id
+
+    for attr, field in (
+        ("code", "error_code"),
+        ("type", "error_api_type"),
+        ("param", "error_param"),
+    ):
+        value = getattr(exc, attr, None)
+        if isinstance(value, (str, int, float, bool)):
+            item[field] = value
+
+    response = getattr(exc, "response", None)
+    if response is not None:
+        response_status = getattr(response, "status_code", None)
+        if isinstance(response_status, int):
+            item["error_response_status_code"] = response_status
+
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            content_type = headers.get("content-type")
+            if isinstance(content_type, str) and content_type:
+                item["error_response_content_type"] = (
+                    content_type.split(";", 1)[0].strip().lower()
+                )
+
     return item
 
 
@@ -142,20 +180,27 @@ def run_stream_call(
     spec = request_spec()
     tracker.begin("stream")
     started = time.perf_counter()
+    stream_ready_seconds: float | None = None
     first_event_seconds: float | None = None
     first_content_seconds: float | None = None
+    stream_events_observed = 0
+    stream_content_chunks_observed = 0
     content_chars = 0
+    error_phase = "create"
 
     try:
         stream = client.chat.completions.create(**spec, stream=True)
         stream_ready_seconds = round(time.perf_counter() - started, 4)
+        error_phase = "iterate"
         try:
             for chunk in stream:
                 now = time.perf_counter()
+                stream_events_observed += 1
                 if first_event_seconds is None:
                     first_event_seconds = round(now - started, 4)
                 content = extract_stream_content(chunk)
                 if content:
+                    stream_content_chunks_observed += 1
                     if first_content_seconds is None:
                         first_content_seconds = round(now - started, 4)
                     content_chars += len(content)
@@ -176,6 +221,8 @@ def run_stream_call(
             "stream_ready_seconds": stream_ready_seconds,
             "first_event_seconds": first_event_seconds,
             "first_content_seconds": first_content_seconds,
+            "stream_events_observed": stream_events_observed,
+            "stream_content_chunks_observed": stream_content_chunks_observed,
             "total_seconds": total_seconds,
             "content_chars_observed": content_chars,
             **transport,
@@ -190,6 +237,13 @@ def run_stream_call(
             "model": spec["model"],
             "status": "infrastructure_error",
             "max_tokens": spec["max_tokens"],
+            "error_phase": error_phase,
+            "stream_ready_seconds": stream_ready_seconds,
+            "first_event_seconds": first_event_seconds,
+            "first_content_seconds": first_content_seconds,
+            "stream_events_observed": stream_events_observed,
+            "stream_content_chunks_observed": stream_content_chunks_observed,
+            "content_chars_observed": content_chars,
             "total_seconds": total_seconds,
             **transport,
             **safe_error_metadata(exc),
@@ -233,6 +287,7 @@ def run_nonstream_call(
             "model": spec["model"],
             "status": "infrastructure_error",
             "max_tokens": spec["max_tokens"],
+            "error_phase": "request",
             "total_seconds": total_seconds,
             **transport,
             **safe_error_metadata(exc),
@@ -265,6 +320,32 @@ def summarize_mode(
     total_values = metric("total_seconds")
     total_p95 = percentile(total_values, 0.95)
     over_slo = sum(1 for value in total_values if value > slo_seconds)
+    error_types = Counter(
+        str(item["error_type"])
+        for item in errors
+        if isinstance(item.get("error_type"), str)
+    )
+    error_codes = Counter(
+        str(item["error_code"])
+        for item in errors
+        if isinstance(item.get("error_code"), (str, int, float, bool))
+    )
+    error_phases = Counter(
+        str(item["error_phase"])
+        for item in errors
+        if isinstance(item.get("error_phase"), str)
+    )
+    error_status_codes = Counter(
+        int(item["status_code"])
+        for item in errors
+        if isinstance(item.get("status_code"), int)
+    )
+    response_content_types = Counter(
+        content_type
+        for item in items
+        for content_type in item.get("response_content_types", [])
+        if isinstance(content_type, str)
+    )
 
     summary: dict[str, Any] = {
         "model": ULTRA_MODEL,
@@ -293,6 +374,11 @@ def summarize_mode(
             if isinstance(item.get("retries"), int)
         ),
         "status_codes": dict(sorted(status_codes.items())),
+        "response_content_types": dict(sorted(response_content_types.items())),
+        "error_types": dict(sorted(error_types.items())),
+        "error_codes": dict(sorted(error_codes.items())),
+        "error_phases": dict(sorted(error_phases.items())),
+        "error_status_codes": dict(sorted(error_status_codes.items())),
         "slo_seconds": slo_seconds,
         "strict_slo_met": (
             len(items) == planned
