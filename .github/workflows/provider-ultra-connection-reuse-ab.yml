@@ -80,9 +80,6 @@ jobs:
               "http_version",
           )
           baseline_missing = [
-              item for item in baseline if False
-          ]
-          baseline_missing = [
               item for item in baseline_required if item not in baseline
           ]
           if baseline_missing:
@@ -205,6 +202,7 @@ jobs:
 
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
           root = Path("provider-ultra-connection-reuse-ab")
@@ -221,7 +219,7 @@ jobs:
               report = json.loads(path.read_text(encoding="utf-8"))
               if report.get("complete") is not True:
                   raise SystemExit(f"incomplete A/B report: {path}")
-              if report.get("git_sha") != "${GITHUB_SHA}":
+              if report.get("git_sha") != os.environ["GITHUB_SHA"]:
                   raise SystemExit(f"SHA mismatch in A/B report: {path}")
               if report.get("promotion_authorized") is not False:
                   raise SystemExit(f"promotion contract violated: {path}")
