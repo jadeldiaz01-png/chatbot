@@ -13,7 +13,7 @@ from typing import Any
 from openai import DefaultHttpxClient, OpenAI
 
 DIAGNOSTIC_SCHEMA_VERSION = "1.0"
-DIAGNOSTIC_SPEC_VERSION = "2026-09-25.1"
+DIAGNOSTIC_SPEC_VERSION = "2026-09-26.1"
 API_BASE_URL = "https://integrate.api.nvidia.com/v1"
 ULTRA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 REQUEST_ID_HEADERS = ("x-request-id", "x-nvidia-request-id", "request-id")
@@ -44,6 +44,7 @@ class RequestTracker:
             "request_ids": [],
             "response_content_types": [],
             "response_headers_seconds": None,
+            "response": None,
         }
 
     def request_hook(self, _request: Any) -> None:
@@ -53,6 +54,8 @@ class RequestTracker:
     def response_hook(self, response: Any) -> None:
         if self.current is None:
             return
+
+        self.current["response"] = response
 
         if self.current["response_headers_seconds"] is None:
             self.current["response_headers_seconds"] = round(
@@ -90,6 +93,18 @@ class RequestTracker:
         data = self.current
         self.current = None
         attempts = int(data["attempts"])
+
+        response = data.get("response")
+        transport_bytes_downloaded: int | None = None
+        http_version: str | None = None
+        if response is not None:
+            downloaded = getattr(response, "num_bytes_downloaded", None)
+            if isinstance(downloaded, int) and downloaded >= 0:
+                transport_bytes_downloaded = downloaded
+            version = getattr(response, "http_version", None)
+            if isinstance(version, str) and version:
+                http_version = version
+
         return {
             "response_headers_seconds": data["response_headers_seconds"],
             "http_attempts": attempts,
@@ -97,6 +112,8 @@ class RequestTracker:
             "status_codes": list(data["status_codes"]),
             "request_ids": list(data["request_ids"]),
             "response_content_types": list(data["response_content_types"]),
+            "transport_bytes_downloaded": transport_bytes_downloaded,
+            "http_version": http_version,
         }
 
 
@@ -346,6 +363,27 @@ def summarize_mode(
         for content_type in item.get("response_content_types", [])
         if isinstance(content_type, str)
     )
+    http_versions = Counter(
+        str(item["http_version"])
+        for item in items
+        if isinstance(item.get("http_version"), str)
+    )
+    transport_byte_values = [
+        float(item["transport_bytes_downloaded"])
+        for item in items
+        if isinstance(item.get("transport_bytes_downloaded"), int)
+    ]
+    errors_with_zero_transport_bytes = sum(
+        1
+        for item in errors
+        if item.get("transport_bytes_downloaded") == 0
+    )
+    errors_with_nonzero_transport_bytes = sum(
+        1
+        for item in errors
+        if isinstance(item.get("transport_bytes_downloaded"), int)
+        and int(item["transport_bytes_downloaded"]) > 0
+    )
 
     summary: dict[str, Any] = {
         "model": ULTRA_MODEL,
@@ -375,6 +413,19 @@ def summarize_mode(
         ),
         "status_codes": dict(sorted(status_codes.items())),
         "response_content_types": dict(sorted(response_content_types.items())),
+        "http_versions": dict(sorted(http_versions.items())),
+        "transport_bytes_downloaded": {
+            "p50": percentile(transport_byte_values, 0.50),
+            "p95": percentile(transport_byte_values, 0.95),
+            "min": round(min(transport_byte_values), 4)
+            if transport_byte_values
+            else None,
+            "max": round(max(transport_byte_values), 4)
+            if transport_byte_values
+            else None,
+        },
+        "errors_with_zero_transport_bytes": errors_with_zero_transport_bytes,
+        "errors_with_nonzero_transport_bytes": errors_with_nonzero_transport_bytes,
         "error_types": dict(sorted(error_types.items())),
         "error_codes": dict(sorted(error_codes.items())),
         "error_phases": dict(sorted(error_phases.items())),

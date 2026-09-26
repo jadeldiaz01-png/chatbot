@@ -63,6 +63,10 @@ jobs:
               "pacing_seconds_before_call",
               "response_headers_seconds",
               "response_content_types",
+              "transport_bytes_downloaded",
+              "http_version",
+              "errors_with_zero_transport_bytes",
+              "errors_with_nonzero_transport_bytes",
               "error_response_content_type",
               "error_code",
               "error_phase",
@@ -113,7 +117,13 @@ jobs:
                   "diagnostic workflow must build the dedicated immutable runtime"
               )
 
-          forbidden = ("str(exc)", "error_message")
+          forbidden = (
+              "str(exc)",
+              "error_message",
+              "response.text",
+              "response.content",
+              "response.json(",
+          )
           present_forbidden = [item for item in forbidden if item in text]
           if present_forbidden:
               raise SystemExit(
