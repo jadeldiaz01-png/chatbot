@@ -1,0 +1,241 @@
+name: provider-ultra-connection-reuse-ab
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/provider_ultra_connection_reuse_ab.py'
+      - 'Dockerfile.provider-ultra-connection-reuse-ab'
+      - '.github/workflows/provider-ultra-connection-reuse-ab.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/provider_ultra_connection_reuse_ab.py'
+      - 'Dockerfile.provider-ultra-connection-reuse-ab'
+      - '.github/workflows/provider-ultra-connection-reuse-ab.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-ultra-connection-reuse-ab
+  cancel-in-progress: false
+
+jobs:
+  validate-experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Validate A/B source contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            scripts/provider_ultra_transport_diagnostic.py \
+            scripts/provider_ultra_connection_reuse_ab.py
+          python - <<'PY'
+          from pathlib import Path
+
+          experiment = Path(
+              "scripts/provider_ultra_connection_reuse_ab.py"
+          ).read_text(encoding="utf-8")
+          baseline = Path(
+              "scripts/provider_ultra_transport_diagnostic.py"
+          ).read_text(encoding="utf-8")
+
+          required = (
+              'EXPERIMENT_SPEC_VERSION = "2026-09-26.1"',
+              'EXPERIMENT_NAME = "provider_ultra_connection_reuse_ab"',
+              "REPETITIONS_PER_MODE = 20",
+              "SLO_SECONDS = 8.0",
+              "MAX_CONNECTIONS = 1000",
+              '"reuse": 100',
+              '"no_keepalive": 0',
+              "httpx2.Limits(",
+              "max_connections=MAX_CONNECTIONS",
+              "max_keepalive_connections=max_keepalive_connections",
+              '"promotion_authorized": False',
+              '"functional_configuration_changed": False',
+          )
+          missing = [item for item in required if item not in experiment]
+          if missing:
+              raise SystemExit(f"missing connection-reuse A/B markers: {missing}")
+
+          baseline_required = (
+              "nvidia/nemotron-3-ultra-550b-a55b",
+              '"max_tokens": 8',
+              '"temperature": 0.0',
+              '"top_p": 1.0',
+              '"enable_thinking": False',
+              "REQUEST_TIMEOUT_SECONDS = 15.0",
+              "MAX_RETRIES = 0",
+              "PACING_SECONDS = 12.0",
+              "stream=True",
+              "stream=False",
+              "transport_bytes_downloaded",
+              "http_version",
+          )
+          baseline_missing = [
+              item for item in baseline if False
+          ]
+          baseline_missing = [
+              item for item in baseline_required if item not in baseline
+          ]
+          if baseline_missing:
+              raise SystemExit(
+                  f"baseline contract drifted: {baseline_missing}"
+              )
+
+          forbidden = (
+              "response.text",
+              "response.content",
+              "response.json(",
+              "str(exc)",
+              "error_message",
+          )
+          present = [item for item in forbidden if item in experiment]
+          if present:
+              raise SystemExit(f"unsafe payload markers present: {present}")
+
+          print("PROVIDER_CONNECTION_REUSE_AB_SOURCE=PASS")
+          PY
+
+      - name: Validate immutable A/B runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          dockerfile = Path(
+              "Dockerfile.provider-ultra-connection-reuse-ab"
+          ).read_text(encoding="utf-8")
+          required = (
+              "python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254",
+              "COPY requirements.lock ./",
+              "--only-binary=:all:",
+              "--require-hashes -r requirements.lock",
+              "python -m pip check",
+              "COPY scripts/provider_ultra_transport_diagnostic.py",
+              "COPY scripts/provider_ultra_connection_reuse_ab.py",
+          )
+          missing = [item for item in required if item not in dockerfile]
+          if missing:
+              raise SystemExit(f"immutable A/B runtime drift: {missing}")
+          if "requirements.txt" in dockerfile:
+              raise SystemExit(
+                  "A/B runtime must not resolve dependencies from requirements.txt"
+              )
+          print("PROVIDER_CONNECTION_REUSE_AB_RUNTIME=PASS")
+          PY
+
+      - name: Build immutable A/B runtime contract
+        run: |
+          set -euo pipefail
+          docker build --pull \
+            -f Dockerfile.provider-ultra-connection-reuse-ab \
+            -t jadel-chatbot-connection-reuse-ab:pr-validation \
+            .
+
+  provider-ultra-connection-reuse-ab:
+    if: github.event_name != 'pull_request'
+    needs: validate-experiment
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    environment: model-evaluation
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Build immutable Python 3.12 A/B runtime
+        run: |
+          set -euo pipefail
+          docker build --pull \
+            -f Dockerfile.provider-ultra-connection-reuse-ab \
+            -t jadel-chatbot-connection-reuse-ab:${GITHUB_SHA} \
+            .
+
+      - name: Run preregistered serial connection-reuse A/B
+        id: experiment
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -u
+          if [ -z "${NVIDIA_API_KEY}" ]; then
+            echo 'NVIDIA_API_KEY is not configured for model-evaluation' >&2
+            exit 2
+          fi
+
+          mkdir -p provider-ultra-connection-reuse-ab
+          overall_code=0
+
+          for replicate in 1 2 3 4 5; do
+            for condition in reuse no_keepalive; do
+              name="jadel-chatbot-connection-reuse-ab-${condition}-r${replicate}"
+              report="/tmp/${condition}-r${replicate}.json"
+              host_report="provider-ultra-connection-reuse-ab/${condition}-r${replicate}.json"
+
+              set +e
+              docker run --name "${name}" \
+                -e NVIDIA_API_KEY \
+                -e GITHUB_SHA="${GITHUB_SHA}" \
+                jadel-chatbot-connection-reuse-ab:${GITHUB_SHA} \
+                python scripts/provider_ultra_connection_reuse_ab.py \
+                  --condition "${condition}" \
+                  --replicate "${replicate}" \
+                  --output "${report}"
+              diagnostic_code=$?
+              set -e
+
+              docker cp "${name}:${report}" "${host_report}" || overall_code=2
+              docker rm -f "${name}" >/dev/null 2>&1 || true
+
+              if [ "${diagnostic_code}" -ne 0 ]; then
+                overall_code=2
+              fi
+            done
+          done
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("provider-ultra-connection-reuse-ab")
+          expected = [
+              root / f"{condition}-r{replicate}.json"
+              for replicate in range(1, 6)
+              for condition in ("reuse", "no_keepalive")
+          ]
+          missing = [str(path) for path in expected if not path.is_file()]
+          if missing:
+              raise SystemExit(f"missing A/B reports: {missing}")
+
+          for path in expected:
+              report = json.loads(path.read_text(encoding="utf-8"))
+              if report.get("complete") is not True:
+                  raise SystemExit(f"incomplete A/B report: {path}")
+              if report.get("git_sha") != "${GITHUB_SHA}":
+                  raise SystemExit(f"SHA mismatch in A/B report: {path}")
+              if report.get("promotion_authorized") is not False:
+                  raise SystemExit(f"promotion contract violated: {path}")
+
+          print("PROVIDER_CONNECTION_REUSE_AB_REPORT_SET=COMPLETE")
+          PY
+
+          exit "${overall_code}"
+
+      - name: Upload immutable connection-reuse A/B reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: provider-ultra-connection-reuse-ab-${{ github.sha }}
+          path: provider-ultra-connection-reuse-ab/*.json
+          if-no-files-found: warn
+          retention-days: 30
