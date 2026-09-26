@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - 'scripts/provider_ultra_transport_diagnostic.py'
+      - 'Dockerfile.provider-ultra-transport-diagnostic'
       - '.github/workflows/provider-ultra-transport-diagnostic.yml'
   push:
     branches: [main]
     paths:
       - 'scripts/provider_ultra_transport_diagnostic.py'
+      - 'Dockerfile.provider-ultra-transport-diagnostic'
       - '.github/workflows/provider-ultra-transport-diagnostic.yml'
   workflow_dispatch:
     inputs:
@@ -76,6 +78,41 @@ jobs:
               raise SystemExit(f"missing Ultra transport diagnostic markers: {missing}")
           if "NVIDIA_API_KEY" not in text:
               raise SystemExit("diagnostic must consume NVIDIA_API_KEY from environment")
+
+          dockerfile = Path(
+              "Dockerfile.provider-ultra-transport-diagnostic"
+          ).read_text(encoding="utf-8")
+          docker_required = (
+              "python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254",
+              "COPY requirements.lock ./",
+              "--only-binary=:all:",
+              "--require-hashes -r requirements.lock",
+              "python -m pip check",
+              "COPY scripts/provider_ultra_transport_diagnostic.py",
+          )
+          docker_missing = [
+              item for item in docker_required if item not in dockerfile
+          ]
+          if docker_missing:
+              raise SystemExit(
+                  f"missing immutable diagnostic runtime markers: {docker_missing}"
+              )
+          if "requirements.txt" in dockerfile:
+              raise SystemExit(
+                  "diagnostic runtime must not resolve dependencies from requirements.txt"
+              )
+
+          workflow = Path(
+              ".github/workflows/provider-ultra-transport-diagnostic.yml"
+          ).read_text(encoding="utf-8")
+          if (
+              "docker build --pull -f Dockerfile.provider-ultra-transport-diagnostic"
+              not in workflow
+          ):
+              raise SystemExit(
+                  "diagnostic workflow must build the dedicated immutable runtime"
+              )
+
           forbidden = ("str(exc)", "error_message")
           present_forbidden = [item for item in forbidden if item in text]
           if present_forbidden:
@@ -84,6 +121,14 @@ jobs:
               )
           print("PROVIDER_ULTRA_TRANSPORT_DIAGNOSTIC_SOURCE=PASS")
           PY
+      - name: Build immutable diagnostic runtime contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull \
+            -f Dockerfile.provider-ultra-transport-diagnostic \
+            -t jadel-chatbot-ultra-transport-diagnostic:pr-validation \
+            .
 
   provider-ultra-transport-diagnostic:
     if: github.event_name != 'pull_request'
@@ -99,8 +144,8 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Build pinned Python 3.12 diagnostic runtime
-        run: docker build --pull -t jadel-chatbot-ultra-transport-diagnostic:${GITHUB_SHA} .
+      - name: Build immutable Python 3.12 diagnostic runtime
+        run: docker build --pull -f Dockerfile.provider-ultra-transport-diagnostic -t jadel-chatbot-ultra-transport-diagnostic:${GITHUB_SHA} .
       - name: Run paced paired Ultra streaming vs non-streaming diagnostic
         id: diagnostic
         shell: bash
