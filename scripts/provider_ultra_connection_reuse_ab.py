@@ -27,6 +27,7 @@ EXPERIMENT_NAME = "provider_ultra_connection_reuse_ab"
 REPETITIONS_PER_MODE = 20
 SLO_SECONDS = 8.0
 MAX_CONNECTIONS = 1000
+KEEPALIVE_EXPIRY_SECONDS = 30.0
 CONDITIONS = {
     "reuse": 100,
     "no_keepalive": 0,
@@ -63,6 +64,7 @@ def build_experiment_report(
             "http_limits": {
                 "max_connections": MAX_CONNECTIONS,
                 "max_keepalive_connections": CONDITIONS[condition],
+                "keepalive_expiry_seconds": KEEPALIVE_EXPIRY_SECONDS,
             },
             "functional_configuration_changed": False,
             "promotion_authorized": False,
@@ -95,6 +97,7 @@ def main() -> int:
         limits=httpx2.Limits(
             max_connections=MAX_CONNECTIONS,
             max_keepalive_connections=max_keepalive_connections,
+            keepalive_expiry=KEEPALIVE_EXPIRY_SECONDS,
         ),
         event_hooks={
             "request": [tracker.request_hook],
