@@ -53,11 +53,13 @@ jobs:
               "REPETITIONS_PER_MODE = 20",
               "SLO_SECONDS = 8.0",
               "MAX_CONNECTIONS = 1000",
+              "KEEPALIVE_EXPIRY_SECONDS = 30.0",
               '"reuse": 100',
               '"no_keepalive": 0',
               "httpx2.Limits(",
               "max_connections=MAX_CONNECTIONS",
               "max_keepalive_connections=max_keepalive_connections",
+              "keepalive_expiry=KEEPALIVE_EXPIRY_SECONDS",
               '"promotion_authorized": False',
               '"functional_configuration_changed": False',
           )
@@ -142,7 +144,7 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: validate-experiment
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 240
     environment: model-evaluation
     steps:
       - name: Checkout immutable revision
