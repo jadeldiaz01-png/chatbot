@@ -13,7 +13,7 @@ def test_analyze_report_is_diagnostic_only() -> None:
     source_sha = "f0ae7cf8e6605b88c079fe7ca8c7c1a283dff549"
     report = {
         "complete": True,
-        "commit_sha": source_sha,
+        "git_sha": source_sha,
         "connection_reuse_condition": "reuse",
         "replicate": 1,
         "results": [{
