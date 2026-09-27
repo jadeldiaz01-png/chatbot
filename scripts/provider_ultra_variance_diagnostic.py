@@ -62,7 +62,7 @@ def analyze_report(report: dict[str, Any]) -> dict[str, Any]:
         "diagnostic_spec_version": DIAGNOSTIC_SPEC_VERSION,
         "generated_at": datetime.now(UTC).isoformat(),
         "source_complete": report.get("complete") is True,
-        "source_commit_sha": report.get("commit_sha"),
+        "source_commit_sha": report.get("git_sha"),
         "condition": condition,
         "replicate": replicate,
         "calls_observed": len(results),
