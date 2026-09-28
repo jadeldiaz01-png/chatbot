@@ -1,0 +1,41 @@
+name: provider-ultra-variance-diagnostic-ci
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/provider_ultra_variance_diagnostic.py'
+      - 'tests/test_provider_ultra_variance_diagnostic.py'
+      - '.github/workflows/provider-ultra-variance-diagnostic-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-diagnostic-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validate syntax and frozen boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/provider_ultra_variance_diagnostic.py tests/test_provider_ultra_variance_diagnostic.py
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('scripts/provider_ultra_variance_diagnostic.py').read_text()
+          required = ('functional_configuration_changed','promotion_authorized','sensitive_payloads_recorded','typed_error_classes','temporal_calls','http_versions')
+          missing = [x for x in required if x not in source]
+          if missing:
+              raise SystemExit(f'missing diagnostic markers: {missing}')
+          forbidden = ('NVIDIA_API_KEY', 'chat.completions.create', 'API_BASE_URL')
+          present = [x for x in forbidden if x in source]
+          if present:
+              raise SystemExit(f'diagnostic crossed request boundary: {present}')
+          print('PROVIDER_VARIANCE_DIAGNOSTIC_BOUNDARY=PASS')
+          PY
+      - name: Run diagnostic contract test
+        run: python tests/test_provider_ultra_variance_diagnostic.py
