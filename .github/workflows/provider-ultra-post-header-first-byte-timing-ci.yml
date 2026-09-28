@@ -1,0 +1,90 @@
+name: provider-ultra-post-header-first-byte-timing-ci
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/provider_ultra_post_header_first_byte_timing.py'
+      - 'scripts/provider_ultra_post_header_stream_stall.py'
+      - 'scripts/provider_ultra_transport_diagnostic.py'
+      - 'tests/test_provider_ultra_post_header_first_byte_timing.py'
+      - '.github/workflows/provider-ultra-post-header-first-byte-timing-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout immutable PR revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Validate frozen diagnostic contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            scripts/provider_ultra_transport_diagnostic.py \
+            scripts/provider_ultra_post_header_stream_stall.py \
+            scripts/provider_ultra_post_header_first_byte_timing.py \
+            tests/test_provider_ultra_post_header_first_byte_timing.py
+          python - <<'PY'
+          from pathlib import Path
+
+          baseline = Path('scripts/provider_ultra_transport_diagnostic.py').read_text()
+          probe = Path('scripts/provider_ultra_post_header_first_byte_timing.py').read_text()
+          required_baseline = (
+              'API_BASE_URL = "https://integrate.api.nvidia.com/v1"',
+              'ULTRA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"',
+              '"messages": [{"role": "user", "content": "Reply with exactly: OK"}]',
+              '"max_tokens": 8',
+              '"temperature": 0.0',
+              '"top_p": 1.0',
+              '"enable_thinking": False',
+              'REQUEST_TIMEOUT_SECONDS = 15.0',
+              'MAX_RETRIES = 0',
+              'PACING_SECONDS = 12.0',
+          )
+          drift = [item for item in required_baseline if item not in baseline]
+          if drift:
+              raise SystemExit(f'frozen functional contract drifted: {drift}')
+          required_probe = (
+              'OBSERVATION_BOUNDARY = "response_headers_to_first_nonempty_transport_body_chunk"',
+              'FUNCTIONAL_CONFIGURATION_CHANGED = False',
+              'PROMOTION_AUTHORIZED = False',
+              'SENSITIVE_PAYLOADS_RECORDED = False',
+              '"reuse"',
+              '"no_keepalive"',
+          )
+          missing = [item for item in required_probe if item not in probe]
+          if missing:
+              raise SystemExit(f'first-byte diagnostic contract incomplete: {missing}')
+          forbidden = ('response.text', 'response.content', 'response.json(', 'str(exc)')
+          unsafe = [item for item in forbidden if item in probe]
+          if unsafe:
+              raise SystemExit(f'sensitive payload surface introduced: {unsafe}')
+          print('PROVIDER_POST_HEADER_FIRST_BYTE_TIMING_SOURCE=PASS')
+          PY
+
+      - name: Run offline first-byte instrumentation tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_provider_ultra_post_header_first_byte_timing.py
+
+      - name: Prove CI has no live provider credential or dispatch surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          workflow = Path('.github/workflows/provider-ultra-post-header-first-byte-timing-ci.yml').read_text()
+          forbidden = ('workflow_dispatch:', 'NVIDIA_API_KEY', 'secrets.', 'curl ', 'docker run')
+          present = [item for item in forbidden if item in workflow]
+          if present:
+              raise SystemExit(f'offline-only CI boundary violated: {present}')
+          print('PROVIDER_POST_HEADER_FIRST_BYTE_TIMING_OFFLINE_ONLY=PASS')
+          PY
