@@ -32,7 +32,11 @@ jobs:
             scripts/provider_ultra_post_header_first_byte_timing.py \
             tests/test_provider_ultra_post_header_first_byte_timing.py
           python - <<'PY'
+          import sys
           from pathlib import Path
+
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          from provider_ultra_post_header_first_byte_timing import CONDITIONS
 
           baseline = Path('scripts/provider_ultra_transport_diagnostic.py').read_text()
           probe = Path('scripts/provider_ultra_post_header_first_byte_timing.py').read_text()
@@ -56,12 +60,14 @@ jobs:
               'FUNCTIONAL_CONFIGURATION_CHANGED = False',
               'PROMOTION_AUTHORIZED = False',
               'SENSITIVE_PAYLOADS_RECORDED = False',
-              '"reuse"',
-              '"no_keepalive"',
           )
           missing = [item for item in required_probe if item not in probe]
           if missing:
               raise SystemExit(f'first-byte diagnostic contract incomplete: {missing}')
+          if set(CONDITIONS) != {'reuse', 'no_keepalive'}:
+              raise SystemExit(
+                  f'diagnostic conditions drifted: {sorted(CONDITIONS)}'
+              )
           forbidden = ('response.text', 'response.content', 'response.json(', 'str(exc)')
           unsafe = [item for item in forbidden if item in probe]
           if unsafe:
