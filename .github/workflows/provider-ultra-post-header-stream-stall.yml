@@ -4,8 +4,10 @@ on:
   pull_request:
     paths:
       - 'scripts/provider_ultra_post_header_stream_stall.py'
+      - 'scripts/provider_ultra_transport_diagnostic.py'
       - 'tests/test_provider_ultra_post_header_stream_stall.py'
       - 'Dockerfile.provider-ultra-post-header-stream-stall'
+      - 'requirements.lock'
       - '.github/workflows/provider-ultra-post-header-stream-stall.yml'
   workflow_dispatch:
     inputs:
