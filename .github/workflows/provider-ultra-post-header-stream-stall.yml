@@ -48,6 +48,9 @@ jobs:
           baseline = Path(
               "scripts/provider_ultra_transport_diagnostic.py"
           ).read_text(encoding="utf-8")
+          workflow = Path(
+              ".github/workflows/provider-ultra-post-header-stream-stall.yml"
+          ).read_text(encoding="utf-8")
 
           required = (
               'EXPERIMENT_NAME = "provider_ultra_post_header_stream_stall"',
@@ -99,6 +102,20 @@ jobs:
           present = [item for item in forbidden if item in source]
           if present:
               raise SystemExit(f"unsafe payload markers present: {present}")
+
+          execution_boundary_required = (
+              'GITHUB_REF}" != "refs/heads/main"',
+              "MAIN_REF_AUTHORIZATION=FAIL",
+              'EXPECTED_MAIN_SHA}" != "${GITHUB_SHA}"',
+              "EXACT_SHA_AUTHORIZATION=FAIL",
+          )
+          boundary_missing = [
+              item for item in execution_boundary_required if item not in workflow
+          ]
+          if boundary_missing:
+              raise SystemExit(
+                  f"workflow_dispatch execution boundary drifted: {boundary_missing}"
+              )
 
           print("PROVIDER_POST_HEADER_STREAM_STALL_SOURCE=PASS")
           PY
@@ -159,6 +176,11 @@ jobs:
           EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
         run: |
           set -euo pipefail
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "MAIN_REF_AUTHORIZATION=FAIL" >&2
+            exit 4
+          fi
+          echo "MAIN_REF_AUTHORIZATION=PASS"
           if [ "${EXPECTED_MAIN_SHA}" != "${GITHUB_SHA}" ]; then
             echo "EXACT_SHA_AUTHORIZATION=FAIL" >&2
             exit 4
