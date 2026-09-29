@@ -102,6 +102,7 @@ def test_raw_http_stream_and_nonstream_use_mock_transport_only() -> None:
         client.close()
 
     assert stream["status"] == "completed"
+    assert stream["protocol_complete"] is True
     assert stream["status_code"] == 200
     assert stream["first_body_byte_seconds"] is not None
     assert stream["sse_events_observed"] == 2
@@ -109,6 +110,7 @@ def test_raw_http_stream_and_nonstream_use_mock_transport_only() -> None:
     assert stream["request_id"] == "stream-test"
 
     assert nonstream["status"] == "completed"
+    assert nonstream["protocol_complete"] is True
     assert nonstream["status_code"] == 200
     assert nonstream["first_body_byte_seconds"] is not None
     assert nonstream["sse_events_observed"] is None
@@ -120,6 +122,67 @@ def test_raw_http_stream_and_nonstream_use_mock_transport_only() -> None:
     assert left.pop("stream") is True
     assert right.pop("stream") is False
     assert left == right
+
+
+def test_2xx_requires_complete_protocol_body() -> None:
+    class StaticStream(httpx2.SyncByteStream):
+        def __init__(self, body: bytes) -> None:
+            self.body = body
+
+        def __iter__(self):
+            if self.body:
+                yield self.body
+
+    def run_case(*, mode: str, body: bytes, content_type: str):
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(
+                200,
+                request=request,
+                headers={"content-type": content_type},
+                stream=StaticStream(body),
+            )
+
+        client = httpx2.Client(
+            transport=httpx2.MockTransport(handler),
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        try:
+            return run_raw_call(
+                client,
+                api_key="test-key",
+                mode=mode,
+                round_number=1,
+                order_in_round=1,
+            )
+        finally:
+            client.close()
+
+    empty_stream = run_case(
+        mode="stream",
+        body=b"",
+        content_type="text/event-stream",
+    )
+    assert empty_stream["status"] == "protocol_error"
+    assert empty_stream["protocol_complete"] is False
+    assert empty_stream["error_type"] == "IncompleteSSEStream"
+
+    truncated_stream = run_case(
+        mode="stream",
+        body=b'data: {"choices":[]}\n\n',
+        content_type="text/event-stream",
+    )
+    assert truncated_stream["status"] == "protocol_error"
+    assert truncated_stream["protocol_complete"] is False
+    assert truncated_stream["error_type"] == "IncompleteSSEStream"
+
+    invalid_nonstream = run_case(
+        mode="nonstream",
+        body=b'{"choices":[',
+        content_type="application/json",
+    )
+    assert invalid_nonstream["status"] == "protocol_error"
+    assert invalid_nonstream["protocol_complete"] is False
+    assert invalid_nonstream["error_type"] == "IncompleteOrInvalidJSONResponse"
 
 
 def test_report_preserves_frozen_contract_and_no_promotion() -> None:
@@ -153,5 +216,6 @@ def test_report_preserves_frozen_contract_and_no_promotion() -> None:
 if __name__ == "__main__":
     test_raw_payload_differs_only_by_stream_flag()
     test_raw_http_stream_and_nonstream_use_mock_transport_only()
+    test_2xx_requires_complete_protocol_body()
     test_report_preserves_frozen_contract_and_no_promotion()
     print("PROVIDER_ULTRA_RAW_HTTP_STREAM_VS_NONSTREAM_TEST=PASS")
