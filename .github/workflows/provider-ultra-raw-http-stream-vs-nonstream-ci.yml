@@ -1,0 +1,133 @@
+name: provider-ultra-raw-http-stream-vs-nonstream-ci
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/provider_ultra_raw_http_stream_vs_nonstream.py'
+      - 'tests/test_provider_ultra_raw_http_stream_vs_nonstream.py'
+      - '.github/workflows/provider-ultra-raw-http-stream-vs-nonstream-ci.yml'
+      - 'scripts/provider_ultra_transport_diagnostic.py'
+      - 'requirements.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout immutable PR revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Validate raw HTTP diagnostic source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            scripts/provider_ultra_raw_http_stream_vs_nonstream.py \
+            tests/test_provider_ultra_raw_http_stream_vs_nonstream.py
+          python - <<'PY'
+          from pathlib import Path
+
+          baseline = Path('scripts/provider_ultra_transport_diagnostic.py').read_text()
+          raw = Path('scripts/provider_ultra_raw_http_stream_vs_nonstream.py').read_text()
+
+          frozen = (
+              'API_BASE_URL = "https://integrate.api.nvidia.com/v1"',
+              'ULTRA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"',
+              '"messages": [{"role": "user", "content": "Reply with exactly: OK"}]',
+              '"max_tokens": 8',
+              '"temperature": 0.0',
+              '"top_p": 1.0',
+              '"enable_thinking": False',
+              'REQUEST_TIMEOUT_SECONDS = 15.0',
+              'MAX_RETRIES = 0',
+              'PACING_SECONDS = 12.0',
+          )
+          for name, text in (('baseline', baseline), ('raw', raw)):
+              missing = [item for item in frozen if item not in text]
+              if missing:
+                  raise SystemExit(f'{name} frozen functional contract drifted: {missing}')
+
+          required_raw = (
+              'REQUEST_PATH = "raw_httpx2_no_openai_sdk"',
+              'SDK_BYPASSED = True',
+              'FUNCTIONAL_CONFIGURATION_CHANGED = False',
+              'PROMOTION_AUTHORIZED = False',
+              'SENSITIVE_PAYLOADS_RECORDED = False',
+              'EXECUTION_MODE = "paired_sequential_alternating_order_paced"',
+              'REPETITIONS = 20',
+              'SLO_SECONDS = 8.0',
+              'httpx2.HTTPTransport(retries=MAX_RETRIES)',
+              'client.stream(',
+              'response.iter_raw()',
+              '"stream": stream',
+              'headers_to_first_body_byte_seconds',
+              'first_sse_event_seconds',
+              'post_header_no_body_errors',
+          )
+          missing = [item for item in required_raw if item not in raw]
+          if missing:
+              raise SystemExit(f'raw HTTP diagnostic contract incomplete: {missing}')
+
+          forbidden_sdk = (
+              'from ' + 'openai',
+              'import ' + 'openai',
+              'Open' + 'AI(',
+              'chat.completions' + '.create',
+          )
+          sdk_surface = [item for item in forbidden_sdk if item in raw]
+          if sdk_surface:
+              raise SystemExit(f'OpenAI SDK request surface present: {sdk_surface}')
+
+          forbidden_payload = (
+              'response.text',
+              'response.content',
+              'response.json(',
+              'str(exc)',
+          )
+          unsafe = [item for item in forbidden_payload if item in raw]
+          if unsafe:
+              raise SystemExit(f'sensitive response payload surface present: {unsafe}')
+
+          print('PROVIDER_ULTRA_RAW_HTTP_SOURCE=PASS')
+          PY
+
+      - name: Run offline raw HTTP tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_provider_ultra_raw_http_stream_vs_nonstream.py
+
+      - name: Prove CI has no live provider execution surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path(
+              '.github/workflows/provider-ultra-raw-http-stream-vs-nonstream-ci.yml'
+          ).read_text()
+          forbidden = (
+              'workflow_' + 'dispatch:',
+              'push' + ':',
+              'NVIDIA_' + 'API_KEY',
+              'secrets' + '.',
+              'curl' + ' ',
+              'docker' + ' run',
+          )
+          present = [item for item in forbidden if item in workflow]
+          if present:
+              raise SystemExit(f'offline-only CI boundary violated: {present}')
+          print('PROVIDER_ULTRA_RAW_HTTP_OFFLINE_ONLY=PASS')
+          PY
