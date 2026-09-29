@@ -119,6 +119,7 @@ def run_raw_call(
     sse_events_observed = 0
     sse_done_observed = False
     sse_buffer = b""
+    nonstream_body = bytearray()
     status_code: int | None = None
     http_version: str | None = None
     content_type: str | None = None
@@ -166,17 +167,51 @@ def run_raw_call(
                         events_observed=sse_events_observed,
                         done_observed=sse_done_observed,
                     )
+                else:
+                    nonstream_body.extend(chunk)
 
             total_seconds = round(time.perf_counter() - started, 4)
-            status = "completed" if 200 <= status_code < 300 else "http_error"
-            error_type = None if status == "completed" else "HTTPStatusError"
+            protocol_complete = False
+            error_type: str | None = None
+            error_phase_result: str | None = None
+
+            if 200 <= status_code < 300:
+                if stream:
+                    protocol_complete = (
+                        body_bytes_observed > 0
+                        and sse_events_observed > 0
+                        and sse_done_observed
+                    )
+                    if not protocol_complete:
+                        error_type = "IncompleteSSEStream"
+                        error_phase_result = "protocol_completion"
+                else:
+                    if body_bytes_observed == 0:
+                        error_type = "EmptyResponseBody"
+                        error_phase_result = "protocol_completion"
+                    else:
+                        try:
+                            json.loads(bytes(nonstream_body))
+                            protocol_complete = True
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            error_type = "IncompleteOrInvalidJSONResponse"
+                            error_phase_result = "protocol_completion"
+                    nonstream_body.clear()
+
+                status = "completed" if protocol_complete else "protocol_error"
+            else:
+                status = "http_error"
+                error_type = "HTTPStatusError"
+                error_phase_result = "response_status"
+
             return {
                 "mode": mode,
                 "round": round_number,
                 "order_in_round": order_in_round,
                 "status": status,
                 "error_type": error_type,
-                "error_phase": None if status == "completed" else "response_status",
+                "error_phase": error_phase_result,
+                "protocol_complete": protocol_complete,
                 "status_code": status_code,
                 "response_headers_seconds": headers_seconds,
                 "first_body_byte_seconds": first_body_byte_seconds,
@@ -204,6 +239,7 @@ def run_raw_call(
             "order_in_round": order_in_round,
             "status": "infrastructure_error",
             "error_phase": error_phase,
+            "protocol_complete": False,
             "status_code": status_code,
             "response_headers_seconds": headers_seconds,
             "first_body_byte_seconds": first_body_byte_seconds,
