@@ -47,6 +47,13 @@ def test_raw_payload_differs_only_by_stream_flag() -> None:
 def test_raw_http_stream_and_nonstream_use_mock_transport_only() -> None:
     seen_payloads = []
 
+    class StaticStream(httpx2.SyncByteStream):
+        def __init__(self, body: bytes) -> None:
+            self.body = body
+
+        def __iter__(self):
+            yield self.body
+
     def handler(request: httpx2.Request) -> httpx2.Response:
         assert str(request.url) == RAW_CHAT_COMPLETIONS_URL
         assert request.headers["authorization"] == "Bearer test-key"
@@ -60,7 +67,7 @@ def test_raw_http_stream_and_nonstream_use_mock_transport_only() -> None:
                     "content-type": "text/event-stream",
                     "x-request-id": "stream-test",
                 },
-                content=b'data: {"choices":[]}\n\ndata: [DONE]\n\n',
+                stream=StaticStream(b'data: {"choices":[]}\n\ndata: [DONE]\n\n'),
             )
         return httpx2.Response(
             200,
@@ -69,7 +76,7 @@ def test_raw_http_stream_and_nonstream_use_mock_transport_only() -> None:
                 "content-type": "application/json",
                 "x-request-id": "nonstream-test",
             },
-            content=b'{"choices":[]}',
+            stream=StaticStream(b'{"choices":[]}'),
         )
 
     client = httpx2.Client(
