@@ -22,6 +22,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
       - name: Validate frozen diagnostic contract
         shell: bash
         run: |
@@ -88,7 +94,13 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           workflow = Path('.github/workflows/provider-ultra-post-header-first-byte-timing-ci.yml').read_text()
-          forbidden = ('workflow_dispatch:', 'NVIDIA_API_KEY', 'secrets.', 'curl ', 'docker run')
+          forbidden = (
+              'workflow_' + 'dispatch:',
+              'NVIDIA_' + 'API_KEY',
+              'secrets' + '.',
+              'curl' + ' ',
+              'docker' + ' run',
+          )
           present = [item for item in forbidden if item in workflow]
           if present:
               raise SystemExit(f'offline-only CI boundary violated: {present}')

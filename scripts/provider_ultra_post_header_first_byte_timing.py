@@ -21,6 +21,14 @@ OBSERVATION_BOUNDARY = "response_headers_to_first_nonempty_transport_body_chunk"
 FUNCTIONAL_CONFIGURATION_CHANGED = False
 PROMOTION_AUTHORIZED = False
 SENSITIVE_PAYLOADS_RECORDED = False
+TIMEOUT_ERROR_TYPES = frozenset({
+    "APITimeoutError",
+    "ConnectTimeout",
+    "PoolTimeout",
+    "ReadTimeout",
+    "TimeoutException",
+    "WriteTimeout",
+})
 
 
 class FirstByteTimingStream(FirstTransportBodyChunkStream):
@@ -42,6 +50,7 @@ def first_byte_observation(item: dict[str, Any]) -> dict[str, Any]:
     headers = item.get("response_headers_seconds")
     first_chunk = item.get("first_transport_body_chunk_seconds")
     status = item.get("status")
+    error_type = item.get("error_type")
     return {
         "headers_observed": isinstance(headers, (int, float)),
         "first_body_byte_observed": isinstance(first_chunk, (int, float)),
@@ -55,8 +64,9 @@ def first_byte_observation(item: dict[str, Any]) -> dict[str, Any]:
             status != "completed"
             and isinstance(headers, (int, float))
             and first_chunk is None
+            and error_type in TIMEOUT_ERROR_TYPES
         ),
-        "error_type": item.get("error_type"),
+        "error_type": error_type,
         "error_phase": item.get("error_phase"),
     }
 

@@ -36,6 +36,19 @@ def test_post_header_timeout_is_typed_without_payload() -> None:
     assert observation["error_phase"] == "iterate"
 
 
+def test_post_header_non_timeout_is_not_counted_as_timeout() -> None:
+    observation = first_byte_observation({
+        "status": "infrastructure_error",
+        "response_headers_seconds": 1.0,
+        "first_transport_body_chunk_seconds": None,
+        "error_type": "RemoteProtocolError",
+        "error_phase": "iterate",
+    })
+    assert observation["post_header_first_byte_timeout"] is False
+    assert observation["error_type"] == "RemoteProtocolError"
+    assert observation["error_phase"] == "iterate"
+
+
 def test_report_is_non_promoting_and_configuration_frozen() -> None:
     report = build_report([], condition="reuse", replicate=1, complete=False)
     assert report["observation_boundary"] == OBSERVATION_BOUNDARY
@@ -56,5 +69,6 @@ def test_report_is_non_promoting_and_configuration_frozen() -> None:
 if __name__ == "__main__":
     test_first_byte_boundary_completed()
     test_post_header_timeout_is_typed_without_payload()
+    test_post_header_non_timeout_is_not_counted_as_timeout()
     test_report_is_non_promoting_and_configuration_frozen()
     print("PROVIDER_POST_HEADER_FIRST_BYTE_TIMING_TEST=PASS")
