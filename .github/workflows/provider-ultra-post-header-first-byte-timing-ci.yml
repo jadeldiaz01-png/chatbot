@@ -8,6 +8,7 @@ on:
       - 'scripts/provider_ultra_transport_diagnostic.py'
       - 'tests/test_provider_ultra_post_header_first_byte_timing.py'
       - '.github/workflows/provider-ultra-post-header-first-byte-timing-ci.yml'
+      - 'requirements-ci.lock'
 
 permissions:
   contents: read
