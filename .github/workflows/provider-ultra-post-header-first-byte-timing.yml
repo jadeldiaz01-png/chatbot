@@ -1,0 +1,279 @@
+name: provider-ultra-post-header-first-byte-timing
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/provider_ultra_post_header_first_byte_timing.py'
+      - 'scripts/provider_ultra_post_header_stream_stall.py'
+      - 'scripts/provider_ultra_transport_diagnostic.py'
+      - '.github/workflows/provider-ultra-post-header-first-byte-timing.yml'
+      - 'requirements.lock'
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: 'Exact main SHA explicitly authorized for provider execution'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-ultra-post-header-first-byte-timing
+  cancel-in-progress: false
+
+jobs:
+  validate-experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Validate frozen first-byte live contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile             scripts/provider_ultra_transport_diagnostic.py             scripts/provider_ultra_post_header_stream_stall.py             scripts/provider_ultra_post_header_first_byte_timing.py
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          from provider_ultra_post_header_first_byte_timing import (
+              CONDITIONS,
+              FUNCTIONAL_CONFIGURATION_CHANGED,
+              OBSERVATION_BOUNDARY,
+              PROMOTION_AUTHORIZED,
+              SENSITIVE_PAYLOADS_RECORDED,
+          )
+
+          baseline = Path('scripts/provider_ultra_transport_diagnostic.py').read_text()
+          workflow = Path(
+              '.github/workflows/provider-ultra-post-header-first-byte-timing.yml'
+          ).read_text()
+
+          required_baseline = (
+              'API_BASE_URL = "https://integrate.api.nvidia.com/v1"',
+              'ULTRA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"',
+              '"messages": [{"role": "user", "content": "Reply with exactly: OK"}]',
+              '"max_tokens": 8',
+              '"temperature": 0.0',
+              '"top_p": 1.0',
+              '"enable_thinking": False',
+              'REQUEST_TIMEOUT_SECONDS = 15.0',
+              'MAX_RETRIES = 0',
+              'PACING_SECONDS = 12.0',
+          )
+          drift = [item for item in required_baseline if item not in baseline]
+          if drift:
+              raise SystemExit(f'frozen request contract drifted: {drift}')
+
+          if set(CONDITIONS) != {'reuse', 'no_keepalive'}:
+              raise SystemExit(f'diagnostic conditions drifted: {sorted(CONDITIONS)}')
+          if OBSERVATION_BOUNDARY != 'response_headers_to_first_nonempty_transport_body_chunk':
+              raise SystemExit('observation boundary drifted')
+          if FUNCTIONAL_CONFIGURATION_CHANGED is not False:
+              raise SystemExit('functional configuration change must remain false')
+          if PROMOTION_AUTHORIZED is not False:
+              raise SystemExit('promotion must remain unauthorized')
+          if SENSITIVE_PAYLOADS_RECORDED is not False:
+              raise SystemExit('sensitive payload recording must remain false')
+
+          boundary_required = (
+              'GITHUB_REF}" != "refs/heads/main"',
+              'MAIN_REF_AUTHORIZATION=FAIL',
+              'EXPECTED_MAIN_SHA}" != "${GITHUB_SHA}"',
+              'EXACT_SHA_AUTHORIZATION=FAIL',
+          )
+          missing = [item for item in boundary_required if item not in workflow]
+          if missing:
+              raise SystemExit(f'exact-SHA execution boundary drifted: {missing}')
+
+          print('PROVIDER_POST_HEADER_FIRST_BYTE_LIVE_CONTRACT=PASS')
+          PY
+
+      - name: Validate report transformation offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          from provider_ultra_post_header_first_byte_timing import build_report
+
+          synthetic = [{
+              'status': 'infrastructure_error',
+              'response_headers_seconds': 1.0,
+              'first_transport_body_chunk_seconds': None,
+              'first_event_seconds': None,
+              'first_content_seconds': None,
+              'total_seconds': 15.0,
+              'error_type': 'ReadTimeout',
+              'error_phase': 'iterate',
+          }]
+          report = build_report(
+              synthetic,
+              condition='reuse',
+              replicate=1,
+              complete=False,
+          )
+          obs = report['results'][0]['first_byte_observation']
+          assert obs['headers_observed'] is True
+          assert obs['first_body_byte_observed'] is False
+          assert obs['post_header_first_byte_timeout'] is True
+          assert report['functional_configuration_changed'] is False
+          assert report['promotion_authorized'] is False
+          assert report['sensitive_payloads_recorded'] is False
+          print('PROVIDER_POST_HEADER_FIRST_BYTE_TRANSFORM=PASS')
+          PY
+
+  provider-ultra-post-header-first-byte-timing:
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate-experiment
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: model-evaluation
+    steps:
+      - name: Enforce exact-SHA human execution boundary
+        shell: bash
+        env:
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "MAIN_REF_AUTHORIZATION=FAIL" >&2
+            exit 4
+          fi
+          echo "MAIN_REF_AUTHORIZATION=PASS"
+          if [ "${EXPECTED_MAIN_SHA}" != "${GITHUB_SHA}" ]; then
+            echo "EXACT_SHA_AUTHORIZATION=FAIL" >&2
+            exit 4
+          fi
+          echo "EXACT_SHA_AUTHORIZATION=PASS"
+
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Run preregistered serial first-byte timing diagnostic
+        id: experiment
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -u
+          if [ -z "${NVIDIA_API_KEY}" ]; then
+            echo 'NVIDIA_API_KEY is not configured for model-evaluation' >&2
+            exit 2
+          fi
+
+          mkdir -p provider-ultra-post-header-first-byte-timing/raw
+          mkdir -p provider-ultra-post-header-first-byte-timing/reports
+          overall_code=0
+
+          for replicate in 1 2 3 4 5; do
+            for condition in reuse no_keepalive; do
+              raw="provider-ultra-post-header-first-byte-timing/raw/${condition}-r${replicate}.json"
+              final="provider-ultra-post-header-first-byte-timing/reports/${condition}-r${replicate}.json"
+
+              set +e
+              GITHUB_SHA="${GITHUB_SHA}" python scripts/provider_ultra_post_header_stream_stall.py                 --condition "${condition}"                 --replicate "${replicate}"                 --output "${raw}"
+              diagnostic_code=$?
+              set -e
+
+              CONDITION="${condition}" REPLICATE="${replicate}" RAW="${raw}" FINAL="${final}"               GITHUB_SHA="${GITHUB_SHA}" python - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          from provider_ultra_post_header_first_byte_timing import build_report
+
+          raw = Path(os.environ['RAW'])
+          final = Path(os.environ['FINAL'])
+          source = json.loads(raw.read_text(encoding='utf-8'))
+          report = build_report(
+              source['results'],
+              condition=os.environ['CONDITION'],
+              replicate=int(os.environ['REPLICATE']),
+              complete=bool(source.get('complete')),
+          )
+          report['git_sha'] = os.environ['GITHUB_SHA']
+          final.write_text(
+              json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+              if [ "${diagnostic_code}" -ne 0 ]; then
+                overall_code=2
+              fi
+            done
+          done
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path('provider-ultra-post-header-first-byte-timing/reports')
+          expected = [
+              root / f'{condition}-r{replicate}.json'
+              for replicate in range(1, 6)
+              for condition in ('reuse', 'no_keepalive')
+          ]
+          missing = [str(path) for path in expected if not path.is_file()]
+          if missing:
+              raise SystemExit(f'missing first-byte reports: {missing}')
+
+          for path in expected:
+              report = json.loads(path.read_text(encoding='utf-8'))
+              if report.get('complete') is not True:
+                  raise SystemExit(f'incomplete first-byte report: {path}')
+              if report.get('git_sha') != os.environ['GITHUB_SHA']:
+                  raise SystemExit(f'SHA mismatch in first-byte report: {path}')
+              if report.get('functional_configuration_changed') is not False:
+                  raise SystemExit(f'functional contract violated: {path}')
+              if report.get('promotion_authorized') is not False:
+                  raise SystemExit(f'promotion contract violated: {path}')
+              if report.get('sensitive_payloads_recorded') is not False:
+                  raise SystemExit(f'payload-safety contract violated: {path}')
+              results = report.get('results')
+              if not isinstance(results, list) or len(results) != 20:
+                  raise SystemExit(f'unexpected call count: {path}')
+              for item in results:
+                  if 'first_byte_observation' not in item:
+                      raise SystemExit(f'missing first-byte observation: {path}')
+
+          print('PROVIDER_POST_HEADER_FIRST_BYTE_REPORT_SET=COMPLETE')
+          PY
+
+          exit "${overall_code}"
+
+      - name: Upload immutable first-byte timing reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: provider-ultra-post-header-first-byte-timing-${{ github.sha }}
+          path: provider-ultra-post-header-first-byte-timing/reports/*.json
+          if-no-files-found: warn
+          retention-days: 30
