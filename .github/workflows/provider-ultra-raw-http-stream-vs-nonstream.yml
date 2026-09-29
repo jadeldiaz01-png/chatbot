@@ -1,0 +1,297 @@
+name: provider-ultra-raw-http-stream-vs-nonstream
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/provider_ultra_raw_http_stream_vs_nonstream.py'
+      - 'tests/test_provider_ultra_raw_http_stream_vs_nonstream.py'
+      - '.github/workflows/provider-ultra-raw-http-stream-vs-nonstream.yml'
+      - 'requirements.lock'
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: 'Exact main SHA explicitly authorized for raw HTTP provider execution'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-ultra-raw-http-stream-vs-nonstream
+  cancel-in-progress: false
+
+jobs:
+  validate-experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Validate frozen raw HTTP live contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            scripts/provider_ultra_raw_http_stream_vs_nonstream.py \
+            tests/test_provider_ultra_raw_http_stream_vs_nonstream.py
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          from provider_ultra_raw_http_stream_vs_nonstream import (
+              API_BASE_URL,
+              EXECUTION_MODE,
+              FUNCTIONAL_CONFIGURATION_CHANGED,
+              MAX_RETRIES,
+              PACING_SECONDS,
+              PROMOTION_AUTHORIZED,
+              REPETITIONS,
+              REQUEST_PATH,
+              REQUEST_TIMEOUT_SECONDS,
+              SDK_BYPASSED,
+              SENSITIVE_PAYLOADS_RECORDED,
+              SLO_SECONDS,
+              ULTRA_MODEL,
+              raw_request_payload,
+          )
+
+          workflow = Path(
+              '.github/workflows/provider-ultra-raw-http-stream-vs-nonstream.yml'
+          ).read_text(encoding='utf-8')
+
+          assert API_BASE_URL == 'https://integrate.api.nvidia.com/v1'
+          assert ULTRA_MODEL == 'nvidia/nemotron-3-ultra-550b-a55b'
+          assert REQUEST_TIMEOUT_SECONDS == 15.0
+          assert MAX_RETRIES == 0
+          assert PACING_SECONDS == 12.0
+          assert SLO_SECONDS == 8.0
+          assert REPETITIONS == 20
+          assert EXECUTION_MODE == 'paired_sequential_alternating_order_paced'
+          assert REQUEST_PATH == 'raw_httpx2_no_openai_sdk'
+          assert SDK_BYPASSED is True
+          assert FUNCTIONAL_CONFIGURATION_CHANGED is False
+          assert PROMOTION_AUTHORIZED is False
+          assert SENSITIVE_PAYLOADS_RECORDED is False
+
+          stream = raw_request_payload(stream=True)
+          nonstream = raw_request_payload(stream=False)
+          assert stream['model'] == ULTRA_MODEL
+          assert stream['messages'] == [
+              {'role': 'user', 'content': 'Reply with exactly: OK'}
+          ]
+          assert stream['max_tokens'] == 8
+          assert stream['temperature'] == 0.0
+          assert stream['top_p'] == 1.0
+          assert stream['chat_template_kwargs'] == {'enable_thinking': False}
+
+          left = dict(stream)
+          right = dict(nonstream)
+          assert left.pop('stream') is True
+          assert right.pop('stream') is False
+          assert left == right
+
+          boundary_required = (
+              'GITHUB_REF}" != "refs/heads/main"',
+              'MAIN_REF_AUTHORIZATION=FAIL',
+              'EXPECTED_MAIN_SHA}" != "${GITHUB_SHA}"',
+              'EXACT_SHA_AUTHORIZATION=FAIL',
+              'environment: model-evaluation',
+              'NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}',
+          )
+          missing = [item for item in boundary_required if item not in workflow]
+          if missing:
+              raise SystemExit(f'exact-SHA live boundary incomplete: {missing}')
+
+          print('PROVIDER_ULTRA_RAW_HTTP_LIVE_CONTRACT=PASS')
+          PY
+
+      - name: Run raw HTTP diagnostic tests offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_provider_ultra_raw_http_stream_vs_nonstream.py
+
+  provider-ultra-raw-http-stream-vs-nonstream:
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate-experiment
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: model-evaluation
+    steps:
+      - name: Enforce exact-SHA human execution boundary
+        shell: bash
+        env:
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "MAIN_REF_AUTHORIZATION=FAIL" >&2
+            exit 4
+          fi
+          echo "MAIN_REF_AUTHORIZATION=PASS"
+
+          if [ "${EXPECTED_MAIN_SHA}" != "${GITHUB_SHA}" ]; then
+            echo "EXACT_SHA_AUTHORIZATION=FAIL" >&2
+            exit 4
+          fi
+          echo "EXACT_SHA_AUTHORIZATION=PASS"
+
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Run preregistered raw HTTP streaming vs non-streaming diagnostic
+        id: experiment
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -u
+          mkdir -p provider-ultra-raw-http-stream-vs-nonstream
+
+          if [ -z "${NVIDIA_API_KEY}" ]; then
+            echo 'NVIDIA_API_KEY is not configured for model-evaluation' >&2
+            echo 'diagnostic_code=2' >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          set +e
+          GITHUB_SHA="${GITHUB_SHA}" \
+            python scripts/provider_ultra_raw_http_stream_vs_nonstream.py \
+              --output provider-ultra-raw-http-stream-vs-nonstream/report.json
+          diagnostic_code=$?
+          set -e
+
+          echo "diagnostic_code=${diagnostic_code}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Validate immutable raw HTTP report contract
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          GITHUB_SHA="${GITHUB_SHA}" python - <<'PY'
+          import json
+          import os
+          from collections import Counter
+          from pathlib import Path
+
+          path = Path('provider-ultra-raw-http-stream-vs-nonstream/report.json')
+          if not path.is_file():
+              raise SystemExit('raw HTTP diagnostic report is missing')
+
+          report = json.loads(path.read_text(encoding='utf-8'))
+          if report.get('complete') is not True:
+              raise SystemExit('raw HTTP diagnostic report is incomplete')
+          if report.get('git_sha') != os.environ['GITHUB_SHA']:
+              raise SystemExit('raw HTTP diagnostic report SHA mismatch')
+          if report.get('request_path') != 'raw_httpx2_no_openai_sdk':
+              raise SystemExit('raw HTTP request path drifted')
+          if report.get('sdk_bypassed') is not True:
+              raise SystemExit('SDK bypass contract drifted')
+          if report.get('functional_configuration_changed') is not False:
+              raise SystemExit('functional configuration changed')
+          if report.get('promotion_authorized') is not False:
+              raise SystemExit('promotion unexpectedly authorized')
+          if report.get('sensitive_payloads_recorded') is not False:
+              raise SystemExit('sensitive payload recording unexpectedly enabled')
+          if report.get('repetitions_per_mode') != 20:
+              raise SystemExit('repetition count drifted')
+          if report.get('configured_pacing_seconds') != 12.0:
+              raise SystemExit('pacing drifted')
+          if report.get('configured_timeout_seconds') != 15.0:
+              raise SystemExit('timeout drifted')
+          if report.get('configured_max_retries') != 0:
+              raise SystemExit('retry contract drifted')
+          if report.get('slo_seconds') != 8.0:
+              raise SystemExit('SLO drifted')
+
+          frozen = report.get('frozen_request_contract')
+          if not isinstance(frozen, dict):
+              raise SystemExit('frozen request contract missing')
+          expected = {
+              'model': 'nvidia/nemotron-3-ultra-550b-a55b',
+              'messages': [{'role': 'user', 'content': 'Reply with exactly: OK'}],
+              'max_tokens': 8,
+              'temperature': 0.0,
+              'top_p': 1.0,
+              'enable_thinking': False,
+              'request_timeout_seconds': 15.0,
+              'max_retries': 0,
+              'pacing_seconds': 12.0,
+              'slo_seconds': 8.0,
+          }
+          if frozen != expected:
+              raise SystemExit('frozen request contract mismatch')
+
+          results = report.get('results')
+          if not isinstance(results, list) or len(results) != 40:
+              raise SystemExit('unexpected raw HTTP result count')
+
+          modes = Counter(item.get('mode') for item in results)
+          if modes != Counter({'stream': 20, 'nonstream': 20}):
+              raise SystemExit(f'unexpected mode counts: {dict(modes)}')
+
+          forbidden_result_keys = {
+              'response_text',
+              'response_content',
+              'response_json',
+              'response_body',
+              'body',
+          }
+          for index, item in enumerate(results, start=1):
+              if not isinstance(item, dict):
+                  raise SystemExit(f'invalid result record at index {index}')
+              present = forbidden_result_keys.intersection(item)
+              if present:
+                  raise SystemExit(
+                      f'sensitive response payload field present at index {index}: '
+                      f'{sorted(present)}'
+                  )
+
+          print('PROVIDER_ULTRA_RAW_HTTP_REPORT_SET=COMPLETE')
+          PY
+
+      - name: Upload immutable raw HTTP diagnostic report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: provider-ultra-raw-http-stream-vs-nonstream-${{ github.sha }}
+          path: provider-ultra-raw-http-stream-vs-nonstream/report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Adjudicate diagnostic process exit
+        if: always()
+        shell: bash
+        env:
+          DIAGNOSTIC_CODE: ${{ steps.experiment.outputs.diagnostic_code }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DIAGNOSTIC_CODE}" ]; then
+            echo "RAW_HTTP_DIAGNOSTIC_PROCESS=FAIL_NO_EXIT_CODE" >&2
+            exit 3
+          fi
+          if [ "${DIAGNOSTIC_CODE}" != "0" ]; then
+            echo "RAW_HTTP_DIAGNOSTIC_PROCESS=FAIL_${DIAGNOSTIC_CODE}" >&2
+            exit "${DIAGNOSTIC_CODE}"
+          fi
+          echo "RAW_HTTP_DIAGNOSTIC_PROCESS=PASS"
