@@ -7,20 +7,10 @@ sys.path.insert(0, str(Path("scripts").resolve()))
 
 import provider_ultra_raw_http_stream_vs_nonstream_confirmatory as confirm
 from provider_ultra_raw_http_stream_vs_nonstream import (
-    API_BASE_URL,
-    EXECUTION_MODE,
-    FUNCTIONAL_CONFIGURATION_CHANGED,
-    MAX_RETRIES,
-    PACING_SECONDS,
-    PROMOTION_AUTHORIZED,
-    REPETITIONS,
-    REQUEST_PATH,
-    REQUEST_TIMEOUT_SECONDS,
-    SDK_BYPASSED,
-    SENSITIVE_PAYLOADS_RECORDED,
-    SLO_SECONDS,
-    ULTRA_MODEL,
-    build_report,
+    API_BASE_URL, EXECUTION_MODE, FUNCTIONAL_CONFIGURATION_CHANGED, MAX_RETRIES,
+    PACING_SECONDS, PROMOTION_AUTHORIZED, REPETITIONS, REQUEST_PATH,
+    REQUEST_TIMEOUT_SECONDS, SDK_BYPASSED, SENSITIVE_PAYLOADS_RECORDED,
+    SLO_SECONDS, ULTRA_MODEL, build_report,
 )
 
 
@@ -31,29 +21,16 @@ def synthetic_block(block: int) -> dict:
             ("stream", "nonstream") if round_number % 2 else ("nonstream", "stream"),
             start=1,
         ):
-            results.append(
-                {
-                    "mode": mode,
-                    "round": round_number,
-                    "order_in_round": order_in_round,
-                    "status": "completed",
-                    "error_type": None,
-                    "error_phase": None,
-                    "protocol_complete": True,
-                    "status_code": 200,
-                    "response_headers_seconds": 0.2,
-                    "first_body_byte_seconds": 0.3,
-                    "headers_to_first_body_byte_seconds": 0.1,
-                    "first_sse_event_seconds": 0.4 if mode == "stream" else None,
-                    "total_seconds": 0.5,
-                }
-            )
-    report = build_report(
-        results,
-        repetitions=REPETITIONS,
-        slo_seconds=SLO_SECONDS,
-        complete=True,
-    )
+            results.append({
+                "mode": mode, "round": round_number, "order_in_round": order_in_round,
+                "status": "completed", "error_type": None, "error_phase": None,
+                "protocol_complete": True, "status_code": 200,
+                "response_headers_seconds": 0.2, "first_body_byte_seconds": 0.3,
+                "headers_to_first_body_byte_seconds": 0.1,
+                "first_sse_event_seconds": 0.4 if mode == "stream" else None,
+                "total_seconds": 0.5,
+            })
+    report = build_report(results, repetitions=REPETITIONS, slo_seconds=SLO_SECONDS, complete=True)
     report["block"] = block
     return {"block": block, "report": report}
 
@@ -87,6 +64,9 @@ def test_separate_and_aggregate_evidence() -> None:
     assert sum(x["mode"] == "stream" for x in aggregate["results"]) == 60
     assert sum(x["mode"] == "nonstream" for x in aggregate["results"]) == 60
     assert {x["block"] for x in aggregate["results"]} == {1, 2, 3}
+    assert {x["block_round"] for x in aggregate["results"]} == set(range(1, 21))
+    assert {x["round"] for x in aggregate["results"]} == set(range(1, 61))
+    assert aggregate["comparison"]["paired_rounds"] == 60
 
 
 if __name__ == "__main__":
