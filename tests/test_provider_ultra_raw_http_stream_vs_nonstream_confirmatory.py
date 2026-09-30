@@ -66,7 +66,7 @@ def test_separate_and_aggregate_evidence() -> None:
     assert {x["block"] for x in aggregate["results"]} == {1, 2, 3}
     assert {x["block_round"] for x in aggregate["results"]} == set(range(1, 21))
     assert {x["round"] for x in aggregate["results"]} == set(range(1, 61))
-    assert aggregate["comparison"]["paired_rounds"] == 60
+    assert aggregate["comparison"]["paired_rounds_observed"] == 60
 
 
 if __name__ == "__main__":
