@@ -1,4 +1,4 @@
-name: provider-ultra-raw-http-stream-vs-nonstream-confirmatory
+name: provider-ultra-raw-http-stream-vs-nonstream-confirmatory-ci
 
 on:
   pull_request:
@@ -8,123 +8,77 @@ on:
       - 'tests/test_provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py'
       - '.github/workflows/provider-ultra-raw-http-stream-vs-nonstream-confirmatory.yml'
       - 'requirements.lock'
-  workflow_dispatch:
-    inputs:
-      expected_main_sha:
-        description: 'Exact main SHA explicitly authorized for confirmatory raw HTTP execution'
-        required: true
-        type: string
 
 permissions:
   contents: read
 
-concurrency:
-  group: provider-ultra-raw-http-stream-vs-nonstream-confirmatory
-  cancel-in-progress: false
-
 jobs:
-  validate-confirmatory:
+  validate-confirmatory-offline:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout immutable revision
+      - name: Checkout immutable PR revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+
       - name: Install frozen runtime dependencies
-        run: python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
-      - name: Validate confirmatory contract offline
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile scripts/provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py tests/test_provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Validate frozen confirmatory contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            scripts/provider_ultra_raw_http_stream_vs_nonstream.py \
+            scripts/provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py \
+            tests/test_provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py
           python tests/test_provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py
           python - <<'PY'
           from pathlib import Path
+          base = Path('scripts/provider_ultra_raw_http_stream_vs_nonstream.py').read_text()
+          confirm = Path('scripts/provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py').read_text()
           workflow = Path('.github/workflows/provider-ultra-raw-http-stream-vs-nonstream-confirmatory.yml').read_text()
-          required = (
-              'if: github.event_name == \'workflow_dispatch\'',
-              'environment: model-evaluation',
-              'EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}',
-              'NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}',
-              'EXACT_SHA_AUTHORIZATION=FAIL',
+
+          frozen = (
+              'API_BASE_URL = "https://integrate.api.nvidia.com/v1"',
+              'ULTRA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"',
+              'REQUEST_TIMEOUT_SECONDS = 15.0',
+              'MAX_RETRIES = 0',
+              'PACING_SECONDS = 12.0',
+              'SLO_SECONDS = 8.0',
+              'REPETITIONS = 20',
+              'EXECUTION_MODE = "paired_sequential_alternating_order_paced"',
+              'REQUEST_PATH = "raw_httpx2_no_openai_sdk"',
           )
-          missing = [x for x in required if x not in workflow]
+          missing = [item for item in frozen if item not in base]
           if missing:
-              raise SystemExit(f'confirmatory live boundary incomplete: {missing}')
+              raise SystemExit(f'frozen base contract drifted: {missing}')
+
+          confirmatory = (
+              'BLOCKS = 3',
+              'BLOCK_PAUSE_SECONDS = PACING_SECONDS',
+              'FUNCTIONAL_CONFIGURATION_CHANGED',
+              'PROMOTION_AUTHORIZED',
+              'run_raw_call(',
+              'aggregate_blocks(',
+          )
+          missing = [item for item in confirmatory if item not in confirm]
+          if missing:
+              raise SystemExit(f'confirmatory contract incomplete: {missing}')
+
+          forbidden = (
+              'workflow_' + 'dispatch:',
+              'NVIDIA_' + 'API_KEY',
+              'secrets' + '.',
+              'push' + ':',
+          )
+          present = [item for item in forbidden if item in workflow]
+          if present:
+              raise SystemExit(f'offline-only boundary violated: {present}')
+
           print('PROVIDER_ULTRA_RAW_HTTP_CONFIRMATORY_OFFLINE=PASS')
           PY
-
-  confirmatory-live:
-    if: github.event_name == 'workflow_dispatch'
-    needs: validate-confirmatory
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    environment: model-evaluation
-    steps:
-      - name: Enforce exact-SHA human execution boundary
-        shell: bash
-        env:
-          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
-        run: |
-          set -euo pipefail
-          test "${GITHUB_REF}" = "refs/heads/main" || { echo "MAIN_REF_AUTHORIZATION=FAIL" >&2; exit 4; }
-          echo "MAIN_REF_AUTHORIZATION=PASS"
-          test "${EXPECTED_MAIN_SHA}" = "${GITHUB_SHA}" || { echo "EXACT_SHA_AUTHORIZATION=FAIL" >&2; exit 4; }
-          echo "EXACT_SHA_AUTHORIZATION=PASS"
-      - name: Checkout immutable revision
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-      - name: Install frozen runtime dependencies
-        run: python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
-      - name: Run preregistered confirmatory blocks
-        id: experiment
-        shell: bash
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-        run: |
-          set +e
-          GITHUB_SHA="${GITHUB_SHA}" python scripts/provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py --output-dir provider-ultra-raw-http-confirmatory
-          code=$?
-          set -e
-          echo "diagnostic_code=${code}" >> "${GITHUB_OUTPUT}"
-          exit 0
-      - name: Validate immutable confirmatory evidence
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          GITHUB_SHA="${GITHUB_SHA}" python - <<'PY'
-          import json, os
-          from pathlib import Path
-          root = Path('provider-ultra-raw-http-confirmatory')
-          files = [root / f'block-{i}.json' for i in range(1, 4)]
-          if not all(p.is_file() for p in files):
-              raise SystemExit('confirmatory block evidence incomplete')
-          aggregate = json.loads((root / 'aggregate.json').read_text())
-          if aggregate.get('complete') is not True or aggregate.get('git_sha') != os.environ['GITHUB_SHA']:
-              raise SystemExit('confirmatory aggregate incomplete or SHA mismatch')
-          if aggregate.get('blocks_observed') != 3 or len(aggregate.get('results', [])) != 120:
-              raise SystemExit('confirmatory observation count mismatch')
-          if aggregate.get('functional_configuration_changed') is not False or aggregate.get('promotion_authorized') is not False:
-              raise SystemExit('confirmatory governance boundary drifted')
-          print('PROVIDER_ULTRA_RAW_HTTP_CONFIRMATORY_REPORT_SET=COMPLETE')
-          PY
-      - name: Upload immutable confirmatory evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: provider-ultra-raw-http-confirmatory-${{ github.sha }}
-          path: provider-ultra-raw-http-confirmatory/*.json
-          if-no-files-found: warn
-          retention-days: 30
-      - name: Adjudicate diagnostic process exit
-        if: always()
-        env:
-          DIAGNOSTIC_CODE: ${{ steps.experiment.outputs.diagnostic_code }}
-        run: |
-          set -euo pipefail
-          test -n "${DIAGNOSTIC_CODE}" || exit 3
-          test "${DIAGNOSTIC_CODE}" = "0" || exit "${DIAGNOSTIC_CODE}"
-          echo "RAW_HTTP_CONFIRMATORY_PROCESS=PASS"
