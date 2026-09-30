@@ -1,0 +1,84 @@
+name: provider-ultra-raw-http-stream-vs-nonstream-confirmatory-ci
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/provider_ultra_raw_http_stream_vs_nonstream.py'
+      - 'scripts/provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py'
+      - 'tests/test_provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py'
+      - '.github/workflows/provider-ultra-raw-http-stream-vs-nonstream-confirmatory.yml'
+      - 'requirements.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-confirmatory-offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable PR revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Validate frozen confirmatory contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile \
+            scripts/provider_ultra_raw_http_stream_vs_nonstream.py \
+            scripts/provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py \
+            tests/test_provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py
+          python tests/test_provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py
+          python - <<'PY'
+          from pathlib import Path
+          base = Path('scripts/provider_ultra_raw_http_stream_vs_nonstream.py').read_text()
+          confirm = Path('scripts/provider_ultra_raw_http_stream_vs_nonstream_confirmatory.py').read_text()
+          workflow = Path('.github/workflows/provider-ultra-raw-http-stream-vs-nonstream-confirmatory.yml').read_text()
+
+          frozen = (
+              'API_BASE_URL = "https://integrate.api.nvidia.com/v1"',
+              'ULTRA_MODEL = "nvidia/nemotron-3-ultra-550b-a55b"',
+              'REQUEST_TIMEOUT_SECONDS = 15.0',
+              'MAX_RETRIES = 0',
+              'PACING_SECONDS = 12.0',
+              'SLO_SECONDS = 8.0',
+              'REPETITIONS = 20',
+              'EXECUTION_MODE = "paired_sequential_alternating_order_paced"',
+              'REQUEST_PATH = "raw_httpx2_no_openai_sdk"',
+          )
+          missing = [item for item in frozen if item not in base]
+          if missing:
+              raise SystemExit(f'frozen base contract drifted: {missing}')
+
+          confirmatory = (
+              'BLOCKS = 3',
+              'BLOCK_PAUSE_SECONDS = PACING_SECONDS',
+              'FUNCTIONAL_CONFIGURATION_CHANGED',
+              'PROMOTION_AUTHORIZED',
+              'run_raw_call(',
+              'aggregate_blocks(',
+          )
+          missing = [item for item in confirmatory if item not in confirm]
+          if missing:
+              raise SystemExit(f'confirmatory contract incomplete: {missing}')
+
+          forbidden = (
+              'workflow_' + 'dispatch:',
+              'NVIDIA_' + 'API_KEY',
+              'secrets' + '.',
+              'push' + ':',
+          )
+          present = [item for item in forbidden if item in workflow]
+          if present:
+              raise SystemExit(f'offline-only boundary violated: {present}')
+
+          print('PROVIDER_ULTRA_RAW_HTTP_CONFIRMATORY_OFFLINE=PASS')
+          PY
