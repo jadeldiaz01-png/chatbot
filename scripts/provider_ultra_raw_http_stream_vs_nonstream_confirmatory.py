@@ -36,7 +36,12 @@ BLOCK_PAUSE_SECONDS = PACING_SECONDS
 
 def aggregate_blocks(blocks: list[dict[str, Any]], *, complete: bool) -> dict[str, Any]:
     all_results = [
-        {**item, "block": block["block"]}
+        {
+            **item,
+            "block": block["block"],
+            "block_round": item["round"],
+            "round": (block["block"] - 1) * REPETITIONS + item["round"],
+        }
         for block in blocks
         for item in block["report"]["results"]
     ]
@@ -107,10 +112,7 @@ def run_block(client: httpx2.Client, *, api_key: str, block_number: int) -> dict
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--output-dir",
-        default="provider-ultra-raw-http-confirmatory",
-    )
+    parser.add_argument("--output-dir", default="provider-ultra-raw-http-confirmatory")
     return parser.parse_args()
 
 
@@ -133,10 +135,7 @@ def main() -> int:
             report = run_block(client, api_key=api_key, block_number=block_number)
             write_json(output_dir / f"block-{block_number}.json", report)
             blocks.append({"block": block_number, "report": report})
-            write_json(
-                output_dir / "aggregate.json",
-                aggregate_blocks(blocks, complete=False),
-            )
+            write_json(output_dir / "aggregate.json", aggregate_blocks(blocks, complete=False))
     finally:
         client.close()
 
