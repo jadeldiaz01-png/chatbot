@@ -74,6 +74,72 @@ class ProductionShapedLatencyTests(unittest.TestCase):
         self.assertFalse(summary["strict_slo_met"])
         self.assertEqual(summary["total_retries"], 2)
 
+    def test_incremental_report_persists_partial_and_complete_state(self) -> None:
+        import json
+        import tempfile
+
+        created_at = "2026-10-01T00:00:00+00:00"
+        completed_result = {
+            "sample_id": "service_scope_es-r1",
+            "prompt_id": "service_scope_es",
+            "prompt_sha256": "0" * 64,
+            "status": "completed",
+            "total_seconds": 1.25,
+            "output_chars": 42,
+            "output_tokens": 10,
+            "total_tokens": 20,
+            "response_model": MODULE.MODEL,
+            "http_attempts": 1,
+            "retries": 0,
+            "status_codes": [200],
+            "request_ids": ["req-1"],
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "report.json"
+
+            initial = MODULE.persist_report(
+                path,
+                base_url=MODULE.DEFAULT_BASE_URL,
+                results=[],
+                created_at=created_at,
+            )
+            persisted_initial = json.loads(path.read_text(encoding="utf-8"))
+            self.assertFalse(initial["complete"])
+            self.assertFalse(persisted_initial["complete"])
+            self.assertEqual(persisted_initial["summary"]["observed"], 0)
+            self.assertEqual(persisted_initial["results"], [])
+
+            partial = MODULE.persist_report(
+                path,
+                base_url=MODULE.DEFAULT_BASE_URL,
+                results=[completed_result],
+                created_at=created_at,
+            )
+            persisted_partial = json.loads(path.read_text(encoding="utf-8"))
+            self.assertFalse(partial["complete"])
+            self.assertFalse(persisted_partial["complete"])
+            self.assertEqual(persisted_partial["summary"]["observed"], 1)
+            self.assertEqual(persisted_partial["results"][0]["request_ids"], ["req-1"])
+
+            final_results = [dict(completed_result) for _ in range(MODULE.TOTAL_PLANNED_CALLS)]
+            for index, item in enumerate(final_results, start=1):
+                item["sample_id"] = f"sample-{index:02d}"
+            final = MODULE.persist_report(
+                path,
+                base_url=MODULE.DEFAULT_BASE_URL,
+                results=final_results,
+                created_at=created_at,
+            )
+            persisted_final = json.loads(path.read_text(encoding="utf-8"))
+            self.assertTrue(final["complete"])
+            self.assertTrue(persisted_final["complete"])
+            self.assertEqual(
+                persisted_final["summary"]["observed"],
+                MODULE.TOTAL_PLANNED_CALLS,
+            )
+            self.assertTrue(persisted_final["summary"]["strict_slo_met"])
+
     def test_governance_flags_remain_fail_closed(self) -> None:
         self.assertFalse(MODULE.FUNCTIONAL_CONFIGURATION_CHANGED)
         self.assertFalse(MODULE.PRODUCTION_RUNTIME_PARAMETER_CHANGE_AUTHORIZED)
