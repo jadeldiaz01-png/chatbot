@@ -1,0 +1,118 @@
+name: provider-ultra-production-shaped-latency-ci
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/provider_ultra_production_shaped_latency.py'
+      - 'tests/test_provider_ultra_production_shaped_latency.py'
+      - '.github/workflows/provider-ultra-production-shaped-latency-ci.yml'
+      - 'streamlit_app.py'
+      - 'requirements.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable PR revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Validate production-shaped contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile             scripts/provider_ultra_production_shaped_latency.py             tests/test_provider_ultra_production_shaped_latency.py
+          python tests/test_provider_ultra_production_shaped_latency.py
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          import provider_ultra_production_shaped_latency as probe
+
+          system = probe.load_system_instructions('streamlit_app.py')
+          assert probe.EXPERIMENT_NAME == 'provider_ultra_production_shaped_latency'
+          assert probe.EXPERIMENT_SPEC_VERSION == '2026-10-01.1'
+          assert probe.MODEL == 'nvidia/nemotron-3-ultra-550b-a55b'
+          assert probe.SYSTEM_INSTRUCTIONS_SHA256 == '4c743c2423a91ac2670cc725491a3f2aec850f16c3f8139212519788b4f5f0b3'
+          assert probe.prompt_digest(system) == probe.SYSTEM_INSTRUCTIONS_SHA256
+          assert probe.MAX_TOKENS == 512
+          assert probe.TEMPERATURE == 1.0
+          assert probe.TOP_P == 0.95
+          assert probe.ENABLE_THINKING is False
+          assert probe.STREAM is False
+          assert probe.REQUEST_TIMEOUT_SECONDS == 45.0
+          assert probe.MAX_RETRIES == 2
+          assert probe.PACING_SECONDS == 12.0
+          assert probe.SLO_SECONDS == 8.0
+          assert probe.REPETITIONS_PER_PROMPT == 4
+          assert len(probe.PROMPT_CASES) == 5
+          assert probe.TOTAL_PLANNED_CALLS == 20
+          assert probe.FUNCTIONAL_CONFIGURATION_CHANGED is False
+          assert probe.PRODUCTION_RUNTIME_PARAMETER_CHANGE_AUTHORIZED is False
+          assert probe.PROMOTION_AUTHORIZED is False
+          assert probe.QUALITY_EVALUATION is False
+          assert probe.SENSITIVE_PAYLOADS_RECORDED is False
+          print('PROVIDER_ULTRA_PRODUCTION_SHAPED_CONTRACT=PASS')
+          PY
+
+      - name: Prove report surface excludes prompt and response bodies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('scripts/provider_ultra_production_shaped_latency.py').read_text()
+          forbidden_report_fields = (
+              '"response_text"',
+              '"response_body"',
+              '"response_content"',
+              '"prompt_text"',
+              '"system_instructions"',
+          )
+          present = [item for item in forbidden_report_fields if item in source]
+          if present:
+              raise SystemExit(f'sensitive report surface present: {present}')
+          required = (
+              '"prompt_sha256"',
+              '"output_chars"',
+              '"output_tokens"',
+              '"total_tokens"',
+              '"request_ids"',
+          )
+          missing = [item for item in required if item not in source]
+          if missing:
+              raise SystemExit(f'expected metadata surface missing: {missing}')
+          print('PROVIDER_ULTRA_PRODUCTION_SHAPED_MINIMIZATION=PASS')
+          PY
+
+      - name: Prove CI is offline only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          workflow = Path('.github/workflows/provider-ultra-production-shaped-latency-ci.yml').read_text()
+          forbidden = (
+              'workflow_' + 'dispatch:',
+              'push' + ':',
+              'schedule' + ':',
+              'NVIDIA_' + 'API_KEY',
+              'secrets' + '.',
+          )
+          present = [item for item in forbidden if item in workflow]
+          if present:
+              raise SystemExit(f'offline-only boundary violated: {present}')
+          print('PROVIDER_ULTRA_PRODUCTION_SHAPED_OFFLINE_ONLY=PASS')
+          PY
