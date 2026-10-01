@@ -1,0 +1,83 @@
+name: provider-ultra-sdk-vs-raw-http-ci
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/provider_ultra_sdk_vs_raw_http.py'
+      - 'tests/test_provider_ultra_sdk_vs_raw_http.py'
+      - '.github/workflows/provider-ultra-sdk-vs-raw-http-ci.yml'
+      - 'scripts/provider_ultra_transport_diagnostic.py'
+      - 'scripts/provider_ultra_raw_http_stream_vs_nonstream.py'
+      - 'requirements.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable PR revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Validate SDK vs raw HTTP diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/provider_ultra_sdk_vs_raw_http.py tests/test_provider_ultra_sdk_vs_raw_http.py
+          python tests/test_provider_ultra_sdk_vs_raw_http.py
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('scripts/provider_ultra_sdk_vs_raw_http.py').read_text()
+          required = (
+              'EXPERIMENT_NAME = "provider_ultra_sdk_vs_raw_http"',
+              'REPETITIONS = 20',
+              'SLO_SECONDS = 8.0',
+              'PACING_SECONDS = 12.0',
+              'REQUEST_TIMEOUT_SECONDS = 15.0',
+              'MAX_RETRIES = 0',
+              'EXECUTION_MODE = "four_condition_latin_square_sequential_paced"',
+              '"sdk_stream"', '"raw_stream"', '"sdk_nonstream"', '"raw_nonstream"',
+              'run_sdk_stream_call(', 'run_sdk_nonstream_call(', 'run_raw_call(',
+              'FUNCTIONAL_CONFIGURATION_CHANGED = False',
+              'PROMOTION_AUTHORIZED = False',
+              'SENSITIVE_PAYLOADS_RECORDED = False',
+          )
+          missing = [item for item in required if item not in source]
+          if missing:
+              raise SystemExit(f'diagnostic contract incomplete: {missing}')
+          forbidden_payload = ('response.text', 'response.content', 'response.json(', 'str(exc)')
+          unsafe = [item for item in forbidden_payload if item in source]
+          if unsafe:
+              raise SystemExit(f'sensitive response payload surface present: {unsafe}')
+          print('PROVIDER_ULTRA_SDK_VS_RAW_HTTP_SOURCE=PASS')
+          PY
+
+      - name: Prove CI is offline only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          workflow = Path('.github/workflows/provider-ultra-sdk-vs-raw-http-ci.yml').read_text()
+          forbidden = (
+              'workflow_' + 'dispatch:',
+              'push' + ':',
+              'schedule' + ':',
+              'NVIDIA_' + 'API_KEY',
+              'secrets' + '.',
+          )
+          present = [item for item in forbidden if item in workflow]
+          if present:
+              raise SystemExit(f'offline-only boundary violated: {present}')
+          print('PROVIDER_ULTRA_SDK_VS_RAW_HTTP_OFFLINE_ONLY=PASS')
+          PY
