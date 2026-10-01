@@ -1,0 +1,118 @@
+name: provider-ultra-production-readiness-ci
+
+on:
+  pull_request:
+    paths:
+      - 'evidence/provider-ultra-production-readiness.json'
+      - '.github/workflows/provider-ultra-production-readiness-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-readiness-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable PR revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Validate production readiness manifest offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          path = Path('evidence/provider-ultra-production-readiness.json')
+          data = json.loads(path.read_text(encoding='utf-8'))
+
+          assert data['schema_version'] == '1.0'
+          assert data['repository'] == 'jadeldiaz01-png/chatbot'
+          assert data['provider'] == 'nvidia_nim'
+          assert data['model'] == 'nvidia/nemotron-3-ultra-550b-a55b'
+          assert data['target_p95_seconds'] == 8.0
+          assert data['production_authorized'] is False
+          assert data['promotion_authorized'] is False
+          assert data['current_runtime']['provider'] == 'openai'
+          assert data['current_runtime']['migration_to_nvidia_active'] is False
+          assert data['total_certified_provider_calls'] == 200
+
+          evidence = data['certified_evidence']
+          assert len(evidence) == 2
+          assert sum(item['calls'] for item in evidence) == 200
+          assert all(item['errors'] == 0 for item in evidence)
+
+          expected = {
+              'provider_ultra_raw_http_stream_vs_nonstream_confirmatory': {
+                  'run_id': 36793223794,
+                  'git_sha': '97d80bc5b33cf3ebe5ec8532dc673eba5040b2d8',
+                  'artifact_id': 11133666203,
+                  'artifact_digest': 'sha256:da856e1673d9e279558af80072a7599903707674559002708d374858526b02d4',
+                  'calls': 120,
+              },
+              'provider_ultra_sdk_vs_raw_http': {
+                  'run_id': 36802554934,
+                  'git_sha': '33f99117e79847146c4b3ddd6b397b6dbd5f7424',
+                  'artifact_id': 11136039663,
+                  'artifact_digest': 'sha256:f0398c310457360100be8267494580e775b67bd18472af55fc989d26d2e94ff6',
+                  'calls': 80,
+              },
+          }
+          for item in evidence:
+              name = item['experiment']
+              assert name in expected
+              for key, value in expected[name].items():
+                  assert item[key] == value
+              assert item['contract'] == {
+                  'prompt': 'Reply with exactly: OK',
+                  'max_tokens': 8,
+                  'timeout_seconds': 15,
+                  'max_retries': 0,
+                  'pacing_seconds': 12,
+              }
+              assert re.fullmatch(r'sha256:[0-9a-f]{64}', item['artifact_digest'])
+
+          adjudication = data['adjudication']
+          assert adjudication['minimal_provider_path_p95_slo_pass'] is True
+          assert adjudication['sdk_specific_causal_hypothesis_supported'] is False
+          assert adjudication['automatic_transport_or_mode_promotion_authorized'] is False
+          assert adjudication['production_workload_certified'] is False
+
+          blockers = set(data['blocking_evidence'])
+          required_blockers = {
+              'production_shaped_latency_with_real_system_instructions_and_realistic_output_budget',
+              'production_quality_evaluation_on_current_main',
+              'end_to_end_content_safety_evaluation',
+              'provider_privacy_and_data_handling_review',
+              'runtime_migration_exact_sha_ci',
+              'production_deployment_and_rollback_evidence',
+              'independent_human_activation_approval',
+          }
+          assert required_blockers <= blockers
+          print('PROVIDER_ULTRA_PRODUCTION_READINESS=PASS')
+          PY
+
+      - name: Prove CI is offline only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          workflow = Path('.github/workflows/provider-ultra-production-readiness-ci.yml').read_text()
+          forbidden = (
+              'workflow_' + 'dispatch:',
+              'push' + ':',
+              'schedule' + ':',
+              'NVIDIA_' + 'API_KEY',
+              'secrets' + '.',
+          )
+          present = [item for item in forbidden if item in workflow]
+          if present:
+              raise SystemExit(f'offline-only boundary violated: {present}')
+          print('PROVIDER_ULTRA_PRODUCTION_READINESS_OFFLINE_ONLY=PASS')
+          PY
