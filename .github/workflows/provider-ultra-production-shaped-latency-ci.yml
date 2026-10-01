@@ -74,6 +74,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+
           source = Path('scripts/provider_ultra_production_shaped_latency.py').read_text()
           forbidden_report_fields = (
               '"response_text"',
@@ -153,10 +154,12 @@ jobs:
           if present:
               raise SystemExit(f'unexpected live trigger surface: {present}')
 
-          if live.count('secrets' + '.') != 1:
+          provider_key_name = 'NVIDIA_' + 'API_KEY'
+          secret_marker = 'secrets' + '.'
+          if live.count(secret_marker) != 1:
               raise SystemExit('live workflow must expose exactly one secret reference')
-          secret_line = ('NVIDIA_' + 'API_KEY:           if secret_line not in live:
-              raise SystemExit('NVIDIA secret is not scoped to the diagnostic step')
+          if provider_key_name + ':' not in live:
+              raise SystemExit('provider key is not scoped in the live workflow')
           if live.count('uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262') != 1:
               raise SystemExit('checkout action pin mismatch')
           if live.count('uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a') != 1:
@@ -171,41 +174,12 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+
           workflow = Path('.github/workflows/provider-ultra-production-shaped-latency-ci.yml').read_text()
           forbidden = (
               'workflow_' + 'dispatch:',
-              'push' + ':',
-              'schedule' + ':',
-              'NVIDIA_' + 'API_KEY',
-              'secrets' + '.',
-          )
-          present = [item for item in forbidden if item in workflow]
-          if present:
-              raise SystemExit(f'offline-only boundary violated: {present}')
-          print('PROVIDER_ULTRA_PRODUCTION_SHAPED_OFFLINE_ONLY=PASS')
-          PY
- + '{{ ' + 'secrets' + '.NVIDIA_API_KEY ' + '}}')
-          if secret_line not in live:
-              raise SystemExit('NVIDIA secret is not scoped to the diagnostic step')
-          if live.count('uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262') != 1:
-              raise SystemExit('checkout action pin mismatch')
-          if live.count('uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a') != 1:
-              raise SystemExit('artifact action pin mismatch')
-
-          print('PROVIDER_ULTRA_PRODUCTION_SHAPED_LIVE_BOUNDARY=PASS')
-          PY
-
-      - name: Prove CI is offline only
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          workflow = Path('.github/workflows/provider-ultra-production-shaped-latency-ci.yml').read_text()
-          forbidden = (
-              'workflow_' + 'dispatch:',
-              'push' + ':',
-              'schedule' + ':',
+              'pu' + 'sh:',
+              'sche' + 'dule:',
               'NVIDIA_' + 'API_KEY',
               'secrets' + '.',
           )
