@@ -6,6 +6,7 @@ on:
       - 'scripts/provider_ultra_sdk_vs_raw_http.py'
       - 'tests/test_provider_ultra_sdk_vs_raw_http.py'
       - '.github/workflows/provider-ultra-sdk-vs-raw-http-ci.yml'
+      - '.github/workflows/provider-ultra-sdk-vs-raw-http-live.yml'
       - 'scripts/provider_ultra_transport_diagnostic.py'
       - 'scripts/provider_ultra_raw_http_stream_vs_nonstream.py'
       - 'requirements.lock'
@@ -80,4 +81,45 @@ jobs:
           if present:
               raise SystemExit(f'offline-only boundary violated: {present}')
           print('PROVIDER_ULTRA_SDK_VS_RAW_HTTP_OFFLINE_ONLY=PASS')
+          PY
+
+      - name: Validate governed live boundary offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          live = Path('.github/workflows/provider-ultra-sdk-vs-raw-http-live.yml').read_text()
+          required = (
+              'workflow_' + 'dispatch:',
+              'expected_main_sha:',
+              'refs/heads/main',
+              'EXPECTED_MAIN_SHA',
+              'GITHUB_SHA',
+              'environment: model-evaluation',
+              'NVIDIA_' + 'API_KEY',
+              'provider_ultra_sdk_vs_raw_http.py',
+              'total_planned_calls',
+              "'promotion_authorized': False",
+              'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+              'cancel-in-progress: false',
+          )
+          missing = [item for item in required if item not in live]
+          if missing:
+              raise SystemExit(f'governed live boundary incomplete: {missing}')
+
+          forbidden_triggers = (
+              'pull_' + 'request:',
+              'push' + ':',
+              'schedule' + ':',
+          )
+          present = [item for item in forbidden_triggers if item in live]
+          if present:
+              raise SystemExit(f'live boundary has automatic trigger: {present}')
+
+          if live.count('NVIDIA_' + 'API_KEY') != 4:
+              raise SystemExit('unexpected provider-secret surface count')
+
+          print('PROVIDER_ULTRA_SDK_VS_RAW_HTTP_LIVE_BOUNDARY=PASS')
           PY
