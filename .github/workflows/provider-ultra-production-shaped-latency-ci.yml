@@ -6,6 +6,7 @@ on:
       - 'scripts/provider_ultra_production_shaped_latency.py'
       - 'tests/test_provider_ultra_production_shaped_latency.py'
       - '.github/workflows/provider-ultra-production-shaped-latency-ci.yml'
+      - '.github/workflows/provider-ultra-production-shaped-latency-live.yml'
       - 'streamlit_app.py'
       - 'requirements.lock'
 
@@ -73,6 +74,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+
           source = Path('scripts/provider_ultra_production_shaped_latency.py').read_text()
           forbidden_report_fields = (
               '"response_text"',
@@ -97,17 +99,87 @@ jobs:
           print('PROVIDER_ULTRA_PRODUCTION_SHAPED_MINIMIZATION=PASS')
           PY
 
+      - name: Validate governed live boundary offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          live = Path('.github/workflows/provider-ultra-production-shaped-latency-live.yml').read_text()
+
+          required = (
+              'name: provider-ultra-production-shaped-latency-live',
+              'workflow_' + 'dispatch:',
+              'expected_main_sha:',
+              'permissions:',
+              'contents: read',
+              'cancel-in-progress: false',
+              'environment: model-evaluation',
+              'timeout-minutes: 90',
+              'refs/heads/main',
+              'EXPECTED_MAIN_SHA',
+              'GITHUB_SHA',
+              'provider_ultra_production_shaped_latency.py',
+              'MAX_TOKENS == 512',
+              'TEMPERATURE == 1.0',
+              'TOP_P == 0.95',
+              'ENABLE_THINKING is False',
+              'STREAM is False',
+              'REQUEST_TIMEOUT_SECONDS == 45.0',
+              'MAX_RETRIES == 2',
+              'PACING_SECONDS == 12.0',
+              'SLO_SECONDS == 8.0',
+              'TOTAL_PLANNED_CALLS == 20',
+              'PRODUCTION_RUNTIME_PARAMETER_CHANGE_AUTHORIZED is False',
+              'PROMOTION_AUTHORIZED is False',
+              'QUALITY_EVALUATION is False',
+              'Initialize partial evidence envelope',
+              'Validate immutable production-shaped report',
+              'if: always()',
+              'if-no-files-found: error',
+              'retention-days: 30',
+              'Adjudicate diagnostic process completion',
+          )
+          missing = [item for item in required if item not in live]
+          if missing:
+              raise SystemExit(f'governed live boundary missing markers: {missing}')
+
+          forbidden_triggers = (
+              '\n  pull_request:',
+              '\n  pu' + 'sh:',
+              '\n  sche' + 'dule:',
+          )
+          present = [item for item in forbidden_triggers if item in live]
+          if present:
+              raise SystemExit(f'unexpected live trigger surface: {present}')
+
+          provider_key_name = 'NVIDIA_' + 'API_KEY'
+          secret_marker = 'secrets' + '.'
+          if live.count(secret_marker) != 1:
+              raise SystemExit('live workflow must expose exactly one secret reference')
+          if provider_key_name + ':' not in live:
+              raise SystemExit('provider key is not scoped in the live workflow')
+          if live.count('uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262') != 1:
+              raise SystemExit('checkout action pin mismatch')
+          if live.count('uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a') != 1:
+              raise SystemExit('artifact action pin mismatch')
+
+          print('PROVIDER_ULTRA_PRODUCTION_SHAPED_LIVE_BOUNDARY=PASS')
+          PY
+
       - name: Prove CI is offline only
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+
           workflow = Path('.github/workflows/provider-ultra-production-shaped-latency-ci.yml').read_text()
           forbidden = (
               'workflow_' + 'dispatch:',
-              'push' + ':',
-              'schedule' + ':',
+              'pu' + 'sh:',
+              'sche' + 'dule:',
               'NVIDIA_' + 'API_KEY',
               'secrets' + '.',
           )
