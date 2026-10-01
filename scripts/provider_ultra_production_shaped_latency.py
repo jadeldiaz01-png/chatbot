@@ -265,6 +265,78 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def build_report(
+    *,
+    base_url: str,
+    results: list[dict[str, Any]],
+    created_at: str,
+) -> dict[str, Any]:
+    summary = summarize(results)
+    return {
+        "schema_version": "1.0",
+        "created_at": created_at,
+        "updated_at": datetime.now(UTC).isoformat(),
+        "git_sha": os.getenv("GITHUB_SHA", "local"),
+        "experiment": EXPERIMENT_NAME,
+        "experiment_spec_version": EXPERIMENT_SPEC_VERSION,
+        "provider": "nvidia_nim",
+        "api_base_url": base_url,
+        "model": MODEL,
+        "system_instructions_source": SYSTEM_INSTRUCTIONS_SOURCE,
+        "system_instructions_sha256": SYSTEM_INSTRUCTIONS_SHA256,
+        "prompt_cases": [
+            {"id": prompt_id, "sha256": prompt_digest(prompt)}
+            for prompt_id, prompt in PROMPT_CASES
+        ],
+        "repetitions_per_prompt": REPETITIONS_PER_PROMPT,
+        "total_planned_calls": TOTAL_PLANNED_CALLS,
+        "request_contract": {
+            "max_tokens": MAX_TOKENS,
+            "temperature": TEMPERATURE,
+            "top_p": TOP_P,
+            "enable_thinking": ENABLE_THINKING,
+            "stream": STREAM,
+            "timeout_seconds": REQUEST_TIMEOUT_SECONDS,
+            "max_retries": MAX_RETRIES,
+            "pacing_seconds": PACING_SECONDS,
+        },
+        "target_p95_seconds": SLO_SECONDS,
+        "functional_configuration_changed": FUNCTIONAL_CONFIGURATION_CHANGED,
+        "production_runtime_parameter_change_authorized": (
+            PRODUCTION_RUNTIME_PARAMETER_CHANGE_AUTHORIZED
+        ),
+        "promotion_authorized": PROMOTION_AUTHORIZED,
+        "quality_evaluation": QUALITY_EVALUATION,
+        "sensitive_payloads_recorded": SENSITIVE_PAYLOADS_RECORDED,
+        "complete": len(results) == TOTAL_PLANNED_CALLS,
+        "summary": summary,
+        "results": list(results),
+    }
+
+
+def persist_report(
+    output: str | Path,
+    *,
+    base_url: str,
+    results: list[dict[str, Any]],
+    created_at: str,
+) -> dict[str, Any]:
+    output_path = Path(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    report = build_report(
+        base_url=base_url,
+        results=results,
+        created_at=created_at,
+    )
+    temporary = output_path.with_name(output_path.name + ".tmp")
+    temporary.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(output_path)
+    return report
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -302,6 +374,13 @@ def main() -> int:
     )
 
     results: list[dict[str, Any]] = []
+    created_at = datetime.now(UTC).isoformat()
+    report = persist_report(
+        args.output,
+        base_url=base_url,
+        results=results,
+        created_at=created_at,
+    )
     try:
         for repetition in range(1, REPETITIONS_PER_PROMPT + 1):
             for prompt_id, prompt in PROMPT_CASES:
@@ -316,6 +395,12 @@ def main() -> int:
                         system_instructions=system_instructions,
                     )
                 )
+                report = persist_report(
+                    args.output,
+                    base_url=base_url,
+                    results=results,
+                    created_at=created_at,
+                )
                 if len(results) < TOTAL_PLANNED_CALLS:
                     time.sleep(PACING_SECONDS)
     finally:
@@ -323,53 +408,7 @@ def main() -> int:
         if callable(close):
             close()
 
-    summary = summarize(results)
-    report = {
-        "schema_version": "1.0",
-        "created_at": datetime.now(UTC).isoformat(),
-        "git_sha": os.getenv("GITHUB_SHA", "local"),
-        "experiment": EXPERIMENT_NAME,
-        "experiment_spec_version": EXPERIMENT_SPEC_VERSION,
-        "provider": "nvidia_nim",
-        "api_base_url": base_url,
-        "model": MODEL,
-        "system_instructions_source": SYSTEM_INSTRUCTIONS_SOURCE,
-        "system_instructions_sha256": SYSTEM_INSTRUCTIONS_SHA256,
-        "prompt_cases": [
-            {"id": prompt_id, "sha256": prompt_digest(prompt)}
-            for prompt_id, prompt in PROMPT_CASES
-        ],
-        "repetitions_per_prompt": REPETITIONS_PER_PROMPT,
-        "total_planned_calls": TOTAL_PLANNED_CALLS,
-        "request_contract": {
-            "max_tokens": MAX_TOKENS,
-            "temperature": TEMPERATURE,
-            "top_p": TOP_P,
-            "enable_thinking": ENABLE_THINKING,
-            "stream": STREAM,
-            "timeout_seconds": REQUEST_TIMEOUT_SECONDS,
-            "max_retries": MAX_RETRIES,
-            "pacing_seconds": PACING_SECONDS,
-        },
-        "target_p95_seconds": SLO_SECONDS,
-        "functional_configuration_changed": FUNCTIONAL_CONFIGURATION_CHANGED,
-        "production_runtime_parameter_change_authorized": (
-            PRODUCTION_RUNTIME_PARAMETER_CHANGE_AUTHORIZED
-        ),
-        "promotion_authorized": PROMOTION_AUTHORIZED,
-        "quality_evaluation": QUALITY_EVALUATION,
-        "sensitive_payloads_recorded": SENSITIVE_PAYLOADS_RECORDED,
-        "complete": len(results) == TOTAL_PLANNED_CALLS,
-        "summary": summary,
-        "results": results,
-    }
-
-    output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    summary = report["summary"]
     print(json.dumps(summary, sort_keys=True))
     return 2 if summary["errors"] else 0
 
