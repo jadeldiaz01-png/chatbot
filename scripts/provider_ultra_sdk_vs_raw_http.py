@@ -57,6 +57,18 @@ PROMOTION_AUTHORIZED = False
 SENSITIVE_PAYLOADS_RECORDED = False
 
 
+def frozen_request_payload(*, stream: bool) -> dict[str, Any]:
+    return {
+        "model": "nvidia/nemotron-3-ultra-550b-a55b",
+        "messages": [{"role": "user", "content": "Reply with exactly: OK"}],
+        "max_tokens": 8,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "chat_template_kwargs": {"enable_thinking": False},
+        "stream": stream,
+    }
+
+
 def percentile(values: list[float], p: float) -> float | None:
     if not values:
         return None
@@ -97,8 +109,64 @@ def assert_frozen_base_contracts() -> None:
     )):
         raise RuntimeError("raw governance contract drift")
     for stream in (True, False):
-        if normalized_sdk_payload(stream=stream) != raw_request_payload(stream=stream):
-            raise RuntimeError(f"SDK/raw payload drift stream={stream}")
+        expected = frozen_request_payload(stream=stream)
+        sdk_payload = normalized_sdk_payload(stream=stream)
+        raw_payload = raw_request_payload(stream=stream)
+        if sdk_payload != expected:
+            raise RuntimeError(f"SDK payload drift from frozen contract stream={stream}")
+        if raw_payload != expected:
+            raise RuntimeError(f"raw payload drift from frozen contract stream={stream}")
+
+
+def normalize_comparison_result(condition: str, item: dict[str, Any]) -> dict[str, Any]:
+    result = dict(item)
+    source_status = str(result.get("status") or "unknown")
+    source_error_type = result.get("error_type")
+
+    if condition == "sdk_stream":
+        events = result.get("stream_events_observed")
+        comparison_complete = (
+            source_status == "completed"
+            and isinstance(events, int)
+            and events > 0
+        )
+    elif condition == "raw_stream":
+        status_code = result.get("status_code")
+        events = result.get("sse_events_observed")
+        comparison_complete = (
+            isinstance(status_code, int)
+            and 200 <= status_code < 300
+            and isinstance(events, int)
+            and events > 0
+        )
+    elif condition == "sdk_nonstream":
+        comparison_complete = source_status == "completed"
+    elif condition == "raw_nonstream":
+        comparison_complete = (
+            source_status == "completed"
+            and result.get("protocol_complete") is True
+        )
+    else:
+        raise ValueError(f"unknown condition: {condition}")
+
+    comparison_status = "completed" if comparison_complete else source_status
+    if comparison_status == "completed" and not comparison_complete:
+        comparison_status = "protocol_error"
+    if source_status == "completed" and not comparison_complete:
+        comparison_status = "protocol_error"
+
+    result.update({
+        "source_status": source_status,
+        "source_error_type": source_error_type,
+        "comparison_status": comparison_status,
+        "comparison_protocol_complete": comparison_complete,
+        "comparison_error_type": (
+            None
+            if comparison_complete
+            else source_error_type or "IncompleteComparableResponse"
+        ),
+    })
+    return result
 
 
 def order_for_round(round_number: int) -> tuple[str, ...]:
@@ -154,13 +222,13 @@ def execute_condition(
         "order_in_round": order_in_round,
         "first_signal_seconds": first_signal,
     })
-    return result
+    return normalize_comparison_result(condition, result)
 
 
 def summarize(results: list[dict[str, Any]], condition: str) -> dict[str, Any]:
     items = [x for x in results if x.get("condition") == condition]
-    completed = [x for x in items if x.get("status") == "completed"]
-    errors = [x for x in items if x.get("status") != "completed"]
+    completed = [x for x in items if x.get("comparison_status") == "completed"]
+    errors = [x for x in items if x.get("comparison_status") != "completed"]
 
     def metric(name: str) -> list[float]:
         return [float(x[name]) for x in completed if isinstance(x.get(name), (int, float))]
@@ -200,7 +268,7 @@ def paired_delta(
         lhs, rhs = pair.get(left), pair.get(right)
         if not lhs or not rhs:
             continue
-        if lhs.get("status") == rhs.get("status") == "completed":
+        if lhs.get("comparison_status") == rhs.get("comparison_status") == "completed":
             paired_completed += 1
             a, b = lhs.get(field), rhs.get(field)
             if isinstance(a, (int, float)) and isinstance(b, (int, float)):
