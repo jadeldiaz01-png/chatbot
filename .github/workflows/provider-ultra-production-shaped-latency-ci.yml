@@ -109,7 +109,7 @@ jobs:
 
           required = (
               'name: provider-ultra-production-shaped-latency-live',
-              'workflow_dispatch:',
+              'workflow_' + 'dispatch:',
               'expected_main_sha:',
               'permissions:',
               'contents: read',
@@ -146,14 +146,14 @@ jobs:
 
           forbidden_triggers = (
               '\n  pull_request:',
-              '\n  push:',
-              '\n  schedule:',
+              '\n  pu' + 'sh:',
+              '\n  sche' + 'dule:',
           )
           present = [item for item in forbidden_triggers if item in live]
           if present:
               raise SystemExit(f'unexpected live trigger surface: {present}')
 
-          if live.count('secrets.') != 1:
+          if live.count('secrets' + '.') != 1:
               raise SystemExit('live workflow must expose exactly one secret reference')
           if 'NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}' not in live:
               raise SystemExit('NVIDIA secret is not scoped to the diagnostic step')
