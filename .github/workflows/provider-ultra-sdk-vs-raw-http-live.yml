@@ -1,0 +1,226 @@
+name: provider-ultra-sdk-vs-raw-http-live
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: 'Exact main SHA explicitly authorized for SDK vs raw HTTP provider execution'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-ultra-sdk-vs-raw-http-live
+  cancel-in-progress: false
+
+jobs:
+  provider-ultra-sdk-vs-raw-http:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: model-evaluation
+    steps:
+      - name: Enforce exact-SHA human execution boundary
+        shell: bash
+        env:
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "MAIN_REF_AUTHORIZATION=FAIL" >&2
+            exit 4
+          fi
+          if [ "${EXPECTED_MAIN_SHA}" != "${GITHUB_SHA}" ]; then
+            echo "EXACT_SHA_AUTHORIZATION=FAIL" >&2
+            exit 4
+          fi
+          echo "EXACT_SHA_AUTHORIZATION=PASS"
+
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Validate frozen SDK vs raw HTTP contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_provider_ultra_sdk_vs_raw_http.py
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path('scripts').resolve()))
+          from provider_ultra_sdk_vs_raw_http import (
+              CONDITIONS,
+              EXECUTION_MODE,
+              FUNCTIONAL_CONFIGURATION_CHANGED,
+              MAX_RETRIES,
+              PACING_SECONDS,
+              PROMOTION_AUTHORIZED,
+              REPETITIONS,
+              REQUEST_TIMEOUT_SECONDS,
+              SENSITIVE_PAYLOADS_RECORDED,
+              SLO_SECONDS,
+              assert_frozen_base_contracts,
+          )
+
+          assert_frozen_base_contracts()
+          assert CONDITIONS == (
+              'sdk_stream', 'raw_stream', 'sdk_nonstream', 'raw_nonstream'
+          )
+          assert EXECUTION_MODE == 'four_condition_latin_square_sequential_paced'
+          assert REPETITIONS == 20
+          assert REQUEST_TIMEOUT_SECONDS == 15.0
+          assert MAX_RETRIES == 0
+          assert PACING_SECONDS == 12.0
+          assert SLO_SECONDS == 8.0
+          assert FUNCTIONAL_CONFIGURATION_CHANGED is False
+          assert PROMOTION_AUTHORIZED is False
+          assert SENSITIVE_PAYLOADS_RECORDED is False
+          print('PROVIDER_ULTRA_SDK_VS_RAW_HTTP_LIVE_CONTRACT=PASS')
+          PY
+
+      - name: Run preregistered SDK vs raw HTTP diagnostic
+        id: experiment
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -u
+          mkdir -p provider-ultra-sdk-vs-raw-http
+          if [ -z "${NVIDIA_API_KEY}" ]; then
+            echo 'NVIDIA_API_KEY is not configured for model-evaluation' >&2
+            echo 'diagnostic_code=2' >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          set +e
+          GITHUB_SHA="${GITHUB_SHA}"             python scripts/provider_ultra_sdk_vs_raw_http.py               --output provider-ultra-sdk-vs-raw-http/report.json
+          diagnostic_code=$?
+          set -e
+          echo "diagnostic_code=${diagnostic_code}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Validate immutable SDK vs raw HTTP report
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          GITHUB_SHA="${GITHUB_SHA}" python - <<'PY'
+          import json
+          import os
+          from collections import Counter
+          from pathlib import Path
+
+          path = Path('provider-ultra-sdk-vs-raw-http/report.json')
+          if not path.is_file():
+              raise SystemExit('missing SDK vs raw HTTP report')
+
+          report = json.loads(path.read_text(encoding='utf-8'))
+          required = {
+              'complete': True,
+              'git_sha': os.environ['GITHUB_SHA'],
+              'experiment': 'provider_ultra_sdk_vs_raw_http',
+              'experiment_spec_version': '2026-10-01.1',
+              'execution_mode': 'four_condition_latin_square_sequential_paced',
+              'repetitions_per_condition': 20,
+              'total_planned_calls': 80,
+              'configured_pacing_seconds': 12.0,
+              'configured_timeout_seconds': 15.0,
+              'configured_max_retries': 0,
+              'slo_seconds': 8.0,
+              'functional_configuration_changed': False,
+              'promotion_authorized': False,
+              'sensitive_payloads_recorded': False,
+              'quality_evaluation': False,
+          }
+          for key, expected in required.items():
+              if report.get(key) != expected:
+                  raise SystemExit(f'report contract mismatch: {key}')
+
+          expected_conditions = [
+              'sdk_stream', 'raw_stream', 'sdk_nonstream', 'raw_nonstream'
+          ]
+          if report.get('conditions') != expected_conditions:
+              raise SystemExit('condition contract mismatch')
+
+          frozen = report.get('frozen_request_contract')
+          if frozen != {
+              'model': 'nvidia/nemotron-3-ultra-550b-a55b',
+              'messages': [{'role': 'user', 'content': 'Reply with exactly: OK'}],
+              'max_tokens': 8,
+              'temperature': 0.0,
+              'top_p': 1.0,
+              'enable_thinking': False,
+          }:
+              raise SystemExit('frozen request contract mismatch')
+
+          results = report.get('results')
+          if not isinstance(results, list) or len(results) != 80:
+              raise SystemExit('unexpected result count')
+          if Counter(item.get('condition') for item in results) != Counter({
+              'sdk_stream': 20,
+              'raw_stream': 20,
+              'sdk_nonstream': 20,
+              'raw_nonstream': 20,
+          }):
+              raise SystemExit('unexpected condition counts')
+
+          forbidden = {
+              'response_text', 'response_content', 'response_json',
+              'response_body', 'body', 'authorization', 'api_key'
+          }
+          for item in results:
+              if forbidden.intersection(item):
+                  raise SystemExit('sensitive response payload field present')
+              if 'source_status' not in item:
+                  raise SystemExit('missing source_status')
+              if 'comparison_status' not in item:
+                  raise SystemExit('missing comparison_status')
+              if 'comparison_protocol_complete' not in item:
+                  raise SystemExit('missing normalized completion marker')
+
+          summary = report.get('summary')
+          if not isinstance(summary, dict):
+              raise SystemExit('missing summary')
+          for condition in expected_conditions:
+              item = summary.get(condition)
+              if not isinstance(item, dict):
+                  raise SystemExit(f'missing summary: {condition}')
+              if item.get('planned') != 20 or item.get('observed') != 20:
+                  raise SystemExit(f'incomplete summary: {condition}')
+
+          print('PROVIDER_ULTRA_SDK_VS_RAW_HTTP_REPORT=COMPLETE')
+          PY
+
+      - name: Upload immutable SDK vs raw HTTP report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: provider-ultra-sdk-vs-raw-http-${{ github.sha }}
+          path: provider-ultra-sdk-vs-raw-http/report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Adjudicate SDK vs raw HTTP diagnostic process exit
+        if: always()
+        shell: bash
+        env:
+          DIAGNOSTIC_CODE: ${{ steps.experiment.outputs.diagnostic_code }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DIAGNOSTIC_CODE}" ]; then
+            echo "SDK_VS_RAW_HTTP_PROCESS=FAIL_NO_EXIT_CODE" >&2
+            exit 3
+          fi
+          if [ "${DIAGNOSTIC_CODE}" != "0" ]; then
+            echo "SDK_VS_RAW_HTTP_PROCESS=FAIL_${DIAGNOSTIC_CODE}" >&2
+            exit "${DIAGNOSTIC_CODE}"
+          fi
+          echo "SDK_VS_RAW_HTTP_PROCESS=PASS"
