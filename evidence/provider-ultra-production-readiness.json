@@ -1,0 +1,113 @@
+{
+  "schema_version": "1.0",
+  "system": "jadel-chatbot",
+  "repository": "jadeldiaz01-png/chatbot",
+  "evidence_anchor_main_sha": "33f99117e79847146c4b3ddd6b397b6dbd5f7424",
+  "adjudication_date": "2026-10-01",
+  "provider": "nvidia_nim",
+  "model": "nvidia/nemotron-3-ultra-550b-a55b",
+  "target_p95_seconds": 8,
+  "current_runtime": {
+    "provider": "openai",
+    "source": "streamlit_app.py",
+    "migration_to_nvidia_active": false
+  },
+  "certified_evidence": [
+    {
+      "experiment": "provider_ultra_raw_http_stream_vs_nonstream_confirmatory",
+      "run_id": 36793223794,
+      "git_sha": "97d80bc5b33cf3ebe5ec8532dc673eba5040b2d8",
+      "artifact_id": 11133666203,
+      "artifact_digest": "sha256:da856e1673d9e279558af80072a7599903707674559002708d374858526b02d4",
+      "calls": 120,
+      "errors": 0,
+      "contract": {
+        "prompt": "Reply with exactly: OK",
+        "max_tokens": 8,
+        "timeout_seconds": 15,
+        "max_retries": 0,
+        "pacing_seconds": 12
+      },
+      "results": {
+        "stream": {
+          "observed": 60,
+          "p95_total_seconds": 3.0833,
+          "max_total_seconds": 11.2159,
+          "calls_over_slo": 1,
+          "strict_slo_met": true,
+          "p95_headers_to_first_body_seconds": 2.0077
+        },
+        "nonstream": {
+          "observed": 60,
+          "p95_total_seconds": 2.1221,
+          "max_total_seconds": 2.8839,
+          "calls_over_slo": 0,
+          "strict_slo_met": true,
+          "p95_headers_to_first_body_seconds": 0.0002
+        }
+      }
+    },
+    {
+      "experiment": "provider_ultra_sdk_vs_raw_http",
+      "run_id": 36802554934,
+      "git_sha": "33f99117e79847146c4b3ddd6b397b6dbd5f7424",
+      "artifact_id": 11136039663,
+      "artifact_digest": "sha256:f0398c310457360100be8267494580e775b67bd18472af55fc989d26d2e94ff6",
+      "calls": 80,
+      "errors": 0,
+      "contract": {
+        "prompt": "Reply with exactly: OK",
+        "max_tokens": 8,
+        "timeout_seconds": 15,
+        "max_retries": 0,
+        "pacing_seconds": 12
+      },
+      "results": {
+        "sdk_stream": {
+          "observed": 20,
+          "p95_total_seconds": 2.2042,
+          "calls_over_slo": 0,
+          "strict_slo_met": true,
+          "p95_first_signal_seconds": 1.8662
+        },
+        "raw_stream": {
+          "observed": 20,
+          "p95_total_seconds": 2.5734,
+          "calls_over_slo": 0,
+          "strict_slo_met": true,
+          "p95_first_signal_seconds": 1.9722
+        },
+        "sdk_nonstream": {
+          "observed": 20,
+          "p95_total_seconds": 3.4097,
+          "calls_over_slo": 0,
+          "strict_slo_met": true
+        },
+        "raw_nonstream": {
+          "observed": 20,
+          "p95_total_seconds": 3.2351,
+          "calls_over_slo": 0,
+          "strict_slo_met": true
+        }
+      }
+    }
+  ],
+  "total_certified_provider_calls": 200,
+  "adjudication": {
+    "minimal_provider_path_p95_slo_pass": true,
+    "sdk_specific_causal_hypothesis_supported": false,
+    "automatic_transport_or_mode_promotion_authorized": false,
+    "production_workload_certified": false
+  },
+  "blocking_evidence": [
+    "production_shaped_latency_with_real_system_instructions_and_realistic_output_budget",
+    "production_quality_evaluation_on_current_main",
+    "end_to_end_content_safety_evaluation",
+    "provider_privacy_and_data_handling_review",
+    "runtime_migration_exact_sha_ci",
+    "production_deployment_and_rollback_evidence",
+    "independent_human_activation_approval"
+  ],
+  "production_authorized": false,
+  "promotion_authorized": false
+}
