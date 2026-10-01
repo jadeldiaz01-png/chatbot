@@ -119,7 +119,7 @@ jobs:
               raise SystemExit(f'live boundary has automatic trigger: {present}')
 
           if live.count('NVIDIA_' + 'API_KEY') != 4:
-              raise SystemExit('unexpected NVIDIA_API_KEY surface count')
+              raise SystemExit('unexpected provider-secret surface count')
 
           print('PROVIDER_ULTRA_SDK_VS_RAW_HTTP_LIVE_BOUNDARY=PASS')
           PY
