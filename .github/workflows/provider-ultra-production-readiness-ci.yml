@@ -63,6 +63,55 @@ jobs:
                   'calls': 80,
               },
           }
+          expected_results = {
+              'provider_ultra_raw_http_stream_vs_nonstream_confirmatory': {
+                  'stream': {
+                      'observed': 60,
+                      'p95_total_seconds': 3.0833,
+                      'max_total_seconds': 11.2159,
+                      'calls_over_slo': 1,
+                      'strict_slo_met': True,
+                      'p95_headers_to_first_body_seconds': 2.0077,
+                  },
+                  'nonstream': {
+                      'observed': 60,
+                      'p95_total_seconds': 2.1221,
+                      'max_total_seconds': 2.8839,
+                      'calls_over_slo': 0,
+                      'strict_slo_met': True,
+                      'p95_headers_to_first_body_seconds': 0.0002,
+                  },
+              },
+              'provider_ultra_sdk_vs_raw_http': {
+                  'sdk_stream': {
+                      'observed': 20,
+                      'p95_total_seconds': 2.2042,
+                      'calls_over_slo': 0,
+                      'strict_slo_met': True,
+                      'p95_first_signal_seconds': 1.8662,
+                  },
+                  'raw_stream': {
+                      'observed': 20,
+                      'p95_total_seconds': 2.5734,
+                      'calls_over_slo': 0,
+                      'strict_slo_met': True,
+                      'p95_first_signal_seconds': 1.9722,
+                  },
+                  'sdk_nonstream': {
+                      'observed': 20,
+                      'p95_total_seconds': 3.4097,
+                      'calls_over_slo': 0,
+                      'strict_slo_met': True,
+                  },
+                  'raw_nonstream': {
+                      'observed': 20,
+                      'p95_total_seconds': 3.2351,
+                      'calls_over_slo': 0,
+                      'strict_slo_met': True,
+                  },
+              },
+          }
+
           for item in evidence:
               name = item['experiment']
               assert name in expected
@@ -75,10 +124,24 @@ jobs:
                   'max_retries': 0,
                   'pacing_seconds': 12,
               }
+              assert item['results'] == expected_results[name]
               assert re.fullmatch(r'sha256:[0-9a-f]{64}', item['artifact_digest'])
 
+          all_modes = [
+              result
+              for item in evidence
+              for result in item['results'].values()
+          ]
+          derived_minimal_slo_pass = (
+              len(all_modes) == 6
+              and all(result['strict_slo_met'] is True for result in all_modes)
+              and all(result['p95_total_seconds'] <= data['target_p95_seconds'] for result in all_modes)
+              and sum(result['observed'] for result in all_modes) == 200
+          )
+
           adjudication = data['adjudication']
-          assert adjudication['minimal_provider_path_p95_slo_pass'] is True
+          assert adjudication['minimal_provider_path_p95_slo_pass'] is derived_minimal_slo_pass
+          assert derived_minimal_slo_pass is True
           assert adjudication['sdk_specific_causal_hypothesis_supported'] is False
           assert adjudication['automatic_transport_or_mode_promotion_authorized'] is False
           assert adjudication['production_workload_certified'] is False
