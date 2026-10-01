@@ -155,7 +155,8 @@ jobs:
 
           if live.count('secrets' + '.') != 1:
               raise SystemExit('live workflow must expose exactly one secret reference')
-          if 'NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}' not in live:
+          secret_line = ('NVIDIA_' + 'API_KEY: ${{ ' + 'secrets' + '.NVIDIA_API_KEY }}')
+          if secret_line not in live:
               raise SystemExit('NVIDIA secret is not scoped to the diagnostic step')
           if live.count('uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262') != 1:
               raise SystemExit('checkout action pin mismatch')
