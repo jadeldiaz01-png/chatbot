@@ -36,7 +36,7 @@ def test_report_has_four_paired_conditions_and_no_promotion() -> None:
             experiment.order_for_round(round_number), start=1
         ):
             transport, mode = condition.split("_", 1)
-            results.append({
+            item = {
                 "condition": condition,
                 "transport": transport,
                 "mode": mode,
@@ -46,7 +46,18 @@ def test_report_has_four_paired_conditions_and_no_promotion() -> None:
                 "response_headers_seconds": 0.2,
                 "first_signal_seconds": 0.3 if mode == "stream" else None,
                 "total_seconds": 0.5,
-            })
+            }
+            if condition == "sdk_stream":
+                item["stream_events_observed"] = 1
+            elif condition == "raw_stream":
+                item.update({
+                    "status_code": 200,
+                    "sse_events_observed": 1,
+                    "protocol_complete": True,
+                })
+            elif condition == "raw_nonstream":
+                item.update({"status_code": 200, "protocol_complete": True})
+            results.append(experiment.normalize_comparison_result(condition, item))
 
     report = experiment.build_report(results, complete=True)
     assert report["complete"] is True
@@ -65,7 +76,70 @@ def test_report_has_four_paired_conditions_and_no_promotion() -> None:
     assert report["comparisons"]["raw_stream_minus_nonstream_total"]["paired_completed"] == 20
 
 
+def test_comparison_completion_is_transport_neutral_for_streaming() -> None:
+    sdk_empty = experiment.normalize_comparison_result(
+        "sdk_stream",
+        {"status": "completed", "stream_events_observed": 0},
+    )
+    assert sdk_empty["source_status"] == "completed"
+    assert sdk_empty["comparison_status"] == "protocol_error"
+    assert sdk_empty["comparison_protocol_complete"] is False
+
+    raw_without_done = experiment.normalize_comparison_result(
+        "raw_stream",
+        {
+            "status": "protocol_error",
+            "error_type": "IncompleteSSEStream",
+            "status_code": 200,
+            "sse_events_observed": 1,
+            "protocol_complete": False,
+        },
+    )
+    assert raw_without_done["source_status"] == "protocol_error"
+    assert raw_without_done["comparison_status"] == "completed"
+    assert raw_without_done["comparison_protocol_complete"] is True
+
+
+def test_frozen_contract_rejects_common_builder_drift() -> None:
+    original_sdk = experiment.sdk_request_spec
+    original_raw = experiment.raw_request_payload
+    bad = experiment.frozen_request_payload(stream=False)
+    bad["max_tokens"] = 9
+
+    def bad_sdk_spec():
+        return {
+            "model": bad["model"],
+            "messages": bad["messages"],
+            "max_tokens": bad["max_tokens"],
+            "temperature": bad["temperature"],
+            "top_p": bad["top_p"],
+            "extra_body": {
+                "chat_template_kwargs": bad["chat_template_kwargs"],
+            },
+        }
+
+    def bad_raw_payload(*, stream: bool):
+        payload = dict(bad)
+        payload["stream"] = stream
+        return payload
+
+    experiment.sdk_request_spec = bad_sdk_spec
+    experiment.raw_request_payload = bad_raw_payload
+    try:
+        try:
+            experiment.assert_frozen_base_contracts()
+        except RuntimeError as exc:
+            assert "frozen contract" in str(exc)
+        else:
+            raise AssertionError("common SDK/raw payload drift was not rejected")
+    finally:
+        experiment.sdk_request_spec = original_sdk
+        experiment.raw_request_payload = original_raw
+
+
 if __name__ == "__main__":
     test_frozen_contract_and_order_balance()
     test_report_has_four_paired_conditions_and_no_promotion()
+    test_comparison_completion_is_transport_neutral_for_streaming()
+    test_frozen_contract_rejects_common_builder_drift()
     print("PROVIDER_ULTRA_SDK_VS_RAW_HTTP_TEST=PASS")
