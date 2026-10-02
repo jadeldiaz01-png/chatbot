@@ -30,6 +30,7 @@ PACING_SECONDS = 12.0
 SLO_SECONDS = 8.0
 REPETITIONS_PER_PROMPT = 4
 STREAM = False
+ATTRIBUTION_SCHEMA_VERSION = "2026-10-02.1"
 
 FUNCTIONAL_CONFIGURATION_CHANGED = False
 PRODUCTION_RUNTIME_PARAMETER_CHANGE_AUTHORIZED = False
@@ -115,51 +116,196 @@ def build_request(system_instructions: str, user_prompt: str) -> dict[str, Any]:
 
 
 class AttemptTracker:
-    def __init__(self) -> None:
+    def __init__(self, clock: Any = time.perf_counter) -> None:
+        self._clock = clock
         self.active_sample: str | None = None
         self.attempts: dict[str, int] = {}
         self.status_codes: dict[str, list[int]] = {}
         self.request_ids: dict[str, list[str]] = {}
+        self.sample_started_at: dict[str, float] = {}
+        self.attempt_details: dict[str, list[dict[str, Any]]] = {}
 
-    def begin(self, sample_id: str) -> None:
+    def begin(
+        self,
+        sample_id: str,
+        *,
+        sample_started_at: float | None = None,
+    ) -> None:
         self.active_sample = sample_id
         self.attempts[sample_id] = 0
         self.status_codes[sample_id] = []
         self.request_ids[sample_id] = []
+        self.sample_started_at[sample_id] = (
+            self._clock() if sample_started_at is None else sample_started_at
+        )
+        self.attempt_details[sample_id] = []
 
     def end(self) -> None:
         self.active_sample = None
 
     def on_request(self, _request: Any) -> None:
-        if self.active_sample is not None:
-            sample_id = self.active_sample
-            self.attempts[sample_id] = self.attempts.get(sample_id, 0) + 1
+        sample_id = self.active_sample
+        if sample_id is None:
+            return
+
+        now = self._clock()
+        details = self.attempt_details.setdefault(sample_id, [])
+        if details and details[-1]["_ended_at"] is None:
+            details[-1]["_ended_at"] = now
+
+        attempt_index = len(details) + 1
+        details.append(
+            {
+                "attempt_index": attempt_index,
+                "_request_started_at": now,
+                "_headers_received_at": None,
+                "_ended_at": None,
+                "status_code": None,
+                "request_id": None,
+            }
+        )
+        self.attempts[sample_id] = attempt_index
 
     def on_response(self, response: Any) -> None:
         sample_id = self.active_sample
         if sample_id is None:
             return
+
+        now = self._clock()
+        details = self.attempt_details.setdefault(sample_id, [])
+        if not details:
+            details.append(
+                {
+                    "attempt_index": 1,
+                    "_request_started_at": self.sample_started_at.get(sample_id, now),
+                    "_headers_received_at": None,
+                    "_ended_at": None,
+                    "status_code": None,
+                    "request_id": None,
+                }
+            )
+            self.attempts[sample_id] = 1
+
+        current = details[-1]
+        current["_headers_received_at"] = now
+
         status = getattr(response, "status_code", None)
         if isinstance(status, int):
+            current["status_code"] = status
             self.status_codes.setdefault(sample_id, []).append(status)
+
         headers = getattr(response, "headers", None)
         if headers is None:
             return
         for name in ("x-request-id", "x-nvidia-request-id", "request-id"):
             value = headers.get(name)
             if isinstance(value, str) and value:
+                current["request_id"] = value
                 values = self.request_ids.setdefault(sample_id, [])
                 if value not in values:
                     values.append(value)
                 break
 
-    def snapshot(self, sample_id: str) -> dict[str, Any]:
-        attempts = self.attempts.get(sample_id, 0)
+    @staticmethod
+    def _duration(start: float | None, end: float | None) -> float | None:
+        if start is None or end is None:
+            return None
+        return round(max(0.0, end - start), 4)
+
+    def snapshot(
+        self,
+        sample_id: str,
+        *,
+        call_completed_at: float | None = None,
+    ) -> dict[str, Any]:
+        call_end = self._clock() if call_completed_at is None else call_completed_at
+        details = [dict(item) for item in self.attempt_details.get(sample_id, [])]
+        if details and details[-1]["_ended_at"] is None:
+            details[-1]["_ended_at"] = call_end
+
+        public_attempts: list[dict[str, Any]] = []
+        for index, item in enumerate(details):
+            request_started = item["_request_started_at"]
+            headers_received = item["_headers_received_at"]
+            ended_at = item["_ended_at"]
+            is_final = index == len(details) - 1
+            if is_final:
+                outcome = (
+                    "call_completed_after_headers"
+                    if headers_received is not None
+                    else "call_ended_without_headers"
+                )
+            else:
+                outcome = (
+                    "retry_after_headers"
+                    if headers_received is not None
+                    else "retry_without_headers"
+                )
+
+            public_attempts.append(
+                {
+                    "attempt_index": item["attempt_index"],
+                    "status_code": item["status_code"],
+                    "request_id": item["request_id"],
+                    "outcome": outcome,
+                    "request_to_headers_seconds": self._duration(
+                        request_started,
+                        headers_received,
+                    ),
+                    "request_to_next_attempt_or_end_seconds": self._duration(
+                        request_started,
+                        ended_at,
+                    ),
+                    "headers_to_next_attempt_or_end_seconds": self._duration(
+                        headers_received,
+                        ended_at,
+                    ),
+                }
+            )
+
+        attempts = len(details)
+        first_request_started = (
+            details[0]["_request_started_at"] if details else None
+        )
+        final_headers_received = (
+            details[-1]["_headers_received_at"] if details else None
+        )
+        sample_started = self.sample_started_at.get(sample_id)
+        retry_path_seconds = round(
+            sum(
+                float(item["request_to_next_attempt_or_end_seconds"])
+                for item in public_attempts[:-1]
+                if isinstance(
+                    item["request_to_next_attempt_or_end_seconds"],
+                    (int, float),
+                )
+            ),
+            4,
+        )
+
         return {
             "http_attempts": attempts,
             "retries": max(attempts - 1, 0),
             "status_codes": list(self.status_codes.get(sample_id, [])),
             "request_ids": list(self.request_ids.get(sample_id, [])),
+            "latency_attribution": {
+                "schema_version": ATTRIBUTION_SCHEMA_VERSION,
+                "attribution_available": bool(public_attempts),
+                "pre_first_request_seconds": self._duration(
+                    sample_started,
+                    first_request_started,
+                ),
+                "first_request_to_completion_seconds": self._duration(
+                    first_request_started,
+                    call_end,
+                ),
+                "final_headers_to_completion_seconds": self._duration(
+                    final_headers_received,
+                    call_end,
+                ),
+                "retry_path_seconds": retry_path_seconds,
+                "attempts": public_attempts,
+            },
         }
 
 
@@ -185,11 +331,15 @@ def run_call(
 ) -> dict[str, Any]:
     request = build_request(system_instructions, prompt)
     started = time.perf_counter()
-    tracker.begin(sample_id)
+    tracker.begin(sample_id, sample_started_at=started)
     try:
         completion = client.chat.completions.create(**request)
-        total_seconds = time.perf_counter() - started
-        transport = tracker.snapshot(sample_id)
+        completed_at = time.perf_counter()
+        total_seconds = completed_at - started
+        transport = tracker.snapshot(
+            sample_id,
+            call_completed_at=completed_at,
+        )
         if transport["http_attempts"] == 0:
             transport["http_attempts"] = 1
             transport["retries"] = 0
@@ -214,17 +364,48 @@ def run_call(
             **transport,
         }
     except Exception as exc:
+        failed_at = time.perf_counter()
         return {
             "sample_id": sample_id,
             "prompt_id": prompt_id,
             "prompt_sha256": prompt_digest(prompt),
             "status": "infrastructure_error",
-            "total_seconds": round(time.perf_counter() - started, 4),
-            **tracker.snapshot(sample_id),
+            "total_seconds": round(failed_at - started, 4),
+            **tracker.snapshot(
+                sample_id,
+                call_completed_at=failed_at,
+            ),
             **safe_error_metadata(exc),
         }
     finally:
         tracker.end()
+
+
+def _cohort_latency_summary(
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    latencies = [
+        float(item["total_seconds"])
+        for item in items
+        if isinstance(item.get("total_seconds"), (int, float))
+    ]
+    return {
+        "observed": len(items),
+        "p50_total_seconds": percentile(latencies, 0.50),
+        "p95_total_seconds": percentile(latencies, 0.95),
+        "max_total_seconds": round(max(latencies), 4) if latencies else None,
+        "calls_over_slo": sum(1 for value in latencies if value > SLO_SECONDS),
+    }
+
+
+def _output_token_bucket(output_tokens: int) -> str:
+    if output_tokens <= 64:
+        return "000-064"
+    if output_tokens <= 128:
+        return "065-128"
+    if output_tokens <= 256:
+        return "129-256"
+    return "257-512"
 
 
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -237,6 +418,53 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     ]
     p95 = percentile(latencies, 0.95)
     calls_over_slo = sum(1 for value in latencies if value > SLO_SECONDS)
+
+    retry_samples = [
+        item
+        for item in completed
+        if isinstance(item.get("retries"), int) and item["retries"] > 0
+    ]
+    no_retry_samples = [
+        item
+        for item in completed
+        if item.get("retries") == 0
+    ]
+
+    attribution = [
+        item["latency_attribution"]
+        for item in completed
+        if isinstance(item.get("latency_attribution"), dict)
+        and item["latency_attribution"].get("attribution_available") is True
+    ]
+    pre_request = [
+        float(item["pre_first_request_seconds"])
+        for item in attribution
+        if isinstance(item.get("pre_first_request_seconds"), (int, float))
+    ]
+    final_headers_to_completion = [
+        float(item["final_headers_to_completion_seconds"])
+        for item in attribution
+        if isinstance(
+            item.get("final_headers_to_completion_seconds"),
+            (int, float),
+        )
+    ]
+    retry_path = [
+        float(item["retry_path_seconds"])
+        for item in attribution
+        if isinstance(item.get("retry_path_seconds"), (int, float))
+    ]
+
+    output_buckets: dict[str, list[dict[str, Any]]] = {}
+    for item in completed:
+        output_tokens = item.get("output_tokens")
+        if not isinstance(output_tokens, int):
+            continue
+        output_buckets.setdefault(
+            _output_token_bucket(output_tokens),
+            [],
+        ).append(item)
+
     return {
         "planned": TOTAL_PLANNED_CALLS,
         "observed": len(results),
@@ -256,6 +484,23 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
             for item in results
             if isinstance(item.get("retries"), int)
         ),
+        "latency_attribution": {
+            "schema_version": ATTRIBUTION_SCHEMA_VERSION,
+            "observed_with_attempt_timing": len(attribution),
+            "retry_cohort": _cohort_latency_summary(retry_samples),
+            "no_retry_cohort": _cohort_latency_summary(no_retry_samples),
+            "p95_pre_first_request_seconds": percentile(pre_request, 0.95),
+            "p95_final_headers_to_completion_seconds": percentile(
+                final_headers_to_completion,
+                0.95,
+            ),
+            "p95_retry_path_seconds": percentile(retry_path, 0.95),
+            "output_token_observations": sum(len(items) for items in output_buckets.values()),
+            "output_token_buckets": {
+                name: _cohort_latency_summary(items)
+                for name, items in sorted(output_buckets.items())
+            },
+        },
         "strict_slo_met": (
             len(results) == TOTAL_PLANNED_CALLS
             and not errors
@@ -279,6 +524,7 @@ def build_report(
         "git_sha": os.getenv("GITHUB_SHA", "local"),
         "experiment": EXPERIMENT_NAME,
         "experiment_spec_version": EXPERIMENT_SPEC_VERSION,
+        "attribution_schema_version": ATTRIBUTION_SCHEMA_VERSION,
         "provider": "nvidia_nim",
         "api_base_url": base_url,
         "model": MODEL,
