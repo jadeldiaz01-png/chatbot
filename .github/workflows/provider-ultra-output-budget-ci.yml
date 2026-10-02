@@ -1,0 +1,100 @@
+name: provider-ultra-output-budget-ci
+
+on:
+  pull_request:
+    paths:
+      - "scripts/provider_ultra_output_budget_latency.py"
+      - "tests/test_provider_ultra_output_budget_latency.py"
+      - ".github/workflows/provider-ultra-output-budget-ci.yml"
+      - ".github/workflows/provider-ultra-output-budget-latency-live.yml"
+      - "scripts/provider_ultra_production_shaped_latency.py"
+      - "tests/test_provider_ultra_production_shaped_latency.py"
+      - "streamlit_app.py"
+      - "requirements.lock"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/provider_ultra_output_budget_latency.py"
+      - "tests/test_provider_ultra_output_budget_latency.py"
+      - ".github/workflows/provider-ultra-output-budget-ci.yml"
+      - ".github/workflows/provider-ultra-output-budget-latency-live.yml"
+      - "scripts/provider_ultra_production_shaped_latency.py"
+      - "tests/test_provider_ultra_production_shaped_latency.py"
+      - "streamlit_app.py"
+      - "requirements.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  output-budget-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Verify baseline production-shaped contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_provider_ultra_production_shaped_latency.py
+
+      - name: Verify output-budget experiment contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_provider_ultra_output_budget_latency.py
+
+      - name: Verify fail-closed governance and single-variable design
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path("scripts").resolve()))
+          import provider_ultra_output_budget_latency as experiment
+
+          system = experiment.load_system_instructions("streamlit_app.py")
+          baseline = experiment.baseline.build_request(system, "contract-probe")
+
+          assert experiment.EXPERIMENT_NAME == "provider_ultra_output_budget_latency"
+          assert experiment.OUTPUT_BUDGETS == (128, 256, 512)
+          assert experiment.CALLS_PER_BUDGET == 20
+          assert experiment.TOTAL_PLANNED_CALLS == 60
+          assert experiment.PRODUCTION_CONFIGURATION_CHANGED is False
+          assert experiment.PRODUCTION_RUNTIME_PARAMETER_CHANGE_AUTHORIZED is False
+          assert experiment.PROMOTION_AUTHORIZED is False
+          assert experiment.QUALITY_EVALUATION is False
+          assert experiment.SENSITIVE_PAYLOADS_RECORDED is False
+
+          for budget in experiment.OUTPUT_BUDGETS:
+              request = experiment.build_request(
+                  system,
+                  "contract-probe",
+                  max_tokens=budget,
+              )
+              changed = {
+                  key
+                  for key in set(baseline) | set(request)
+                  if baseline.get(key) != request.get(key)
+              }
+              assert changed == {"max_tokens"}
+              assert request["max_tokens"] == budget
+
+          print("OUTPUT_BUDGET_SINGLE_VARIABLE_CONTRACT=PASS")
+          print("LIVE_EXECUTION=NOT_PERFORMED")
+          print("PRODUCTION_CHANGE=NO")
+          print("PROMOTION=NOT_AUTHORIZED")
+          PY
