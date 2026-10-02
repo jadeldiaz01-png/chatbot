@@ -7,8 +7,13 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+import sys
 
 from openai import DefaultHttpxClient, OpenAI
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import provider_ultra_production_shaped_latency as baseline
 
