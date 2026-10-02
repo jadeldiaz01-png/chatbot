@@ -95,7 +95,11 @@ jobs:
                   for key in set(baseline) | set(request)
                   if baseline.get(key) != request.get(key)
               }
-              assert changed == {"max_tokens"}
+              assert changed.issubset({"max_tokens"})
+              if budget == baseline["max_tokens"]:
+                  assert changed == set()
+              else:
+                  assert changed == {"max_tokens"}
 
           print("OUTPUT_BUDGET_PREREGISTRATION=PASS")
           PY
