@@ -83,6 +83,7 @@ jobs:
           assert probe.REPETITIONS_PER_PROMPT == 4
           assert len(probe.PROMPT_CASES) == 5
           assert probe.TOTAL_PLANNED_CALLS == 20
+          assert probe.ATTRIBUTION_SCHEMA_VERSION == '2026-10-02.1'
           assert probe.FUNCTIONAL_CONFIGURATION_CHANGED is False
           assert probe.PRODUCTION_RUNTIME_PARAMETER_CHANGE_AUTHORIZED is False
           assert probe.PROMOTION_AUTHORIZED is False
@@ -158,6 +159,8 @@ jobs:
           assert report['git_sha'] == os.environ['GITHUB_SHA']
           assert report['experiment'] == probe.EXPERIMENT_NAME
           assert report['experiment_spec_version'] == probe.EXPERIMENT_SPEC_VERSION
+          assert report['attribution_schema_version'] == probe.ATTRIBUTION_SCHEMA_VERSION
+          assert report['attribution_schema_version'] == '2026-10-02.1'
           assert report['provider'] == 'nvidia_nim'
           assert report['api_base_url'] == probe.DEFAULT_BASE_URL
           assert report['model'] == probe.MODEL
@@ -201,6 +204,35 @@ jobs:
           assert report['summary']['completed'] + report['summary']['errors'] == len(results)
           assert report['complete'] is (len(results) == 20)
 
+          summary_attribution = report['summary']['latency_attribution']
+          assert summary_attribution['schema_version'] == probe.ATTRIBUTION_SCHEMA_VERSION
+          assert summary_attribution['schema_version'] == '2026-10-02.1'
+          assert 0 <= summary_attribution['observed_with_attempt_timing'] <= len(results)
+          assert set(summary_attribution['retry_cohort']) == {
+              'observed',
+              'p50_total_seconds',
+              'p95_total_seconds',
+              'max_total_seconds',
+              'calls_over_slo',
+          }
+          assert set(summary_attribution['no_retry_cohort']) == {
+              'observed',
+              'p50_total_seconds',
+              'p95_total_seconds',
+              'max_total_seconds',
+              'calls_over_slo',
+          }
+          assert isinstance(summary_attribution['output_token_buckets'], dict)
+          assert isinstance(summary_attribution['output_token_observations'], int)
+          assert 0 <= summary_attribution['output_token_observations'] <= len(results)
+          for field in (
+              'p95_pre_first_request_seconds',
+              'p95_final_headers_to_completion_seconds',
+              'p95_retry_path_seconds',
+          ):
+              value = summary_attribution[field]
+              assert value is None or isinstance(value, (int, float))
+
           expected_sample_ids = {
               f'{prompt_id}-r{repetition}'
               for repetition in range(1, 5)
@@ -229,6 +261,42 @@ jobs:
               assert item['status'] in {'completed', 'infrastructure_error'}
               assert re.fullmatch(r'[0-9a-f]{64}', item['prompt_sha256'])
               assert forbidden.isdisjoint(item.keys())
+
+              attribution = item['latency_attribution']
+              assert attribution['schema_version'] == probe.ATTRIBUTION_SCHEMA_VERSION
+              assert attribution['schema_version'] == '2026-10-02.1'
+              assert isinstance(attribution['attribution_available'], bool)
+              for field in (
+                  'pre_first_request_seconds',
+                  'first_request_to_completion_seconds',
+                  'final_headers_to_completion_seconds',
+                  'retry_path_seconds',
+              ):
+                  value = attribution[field]
+                  assert value is None or isinstance(value, (int, float))
+              assert isinstance(attribution['attempts'], list)
+              assert len(attribution['attempts']) == item['http_attempts']
+              for attempt_index, attempt in enumerate(attribution['attempts'], start=1):
+                  assert attempt['attempt_index'] == attempt_index
+                  assert attempt['outcome'] in {
+                      'retry_after_headers',
+                      'retry_without_headers',
+                      'call_completed_after_headers',
+                      'call_ended_without_headers',
+                  }
+                  assert attempt['status_code'] is None or isinstance(
+                      attempt['status_code'], int
+                  )
+                  assert attempt['request_id'] is None or isinstance(
+                      attempt['request_id'], str
+                  )
+                  for field in (
+                      'request_to_headers_seconds',
+                      'request_to_next_attempt_or_end_seconds',
+                      'headers_to_next_attempt_or_end_seconds',
+                  ):
+                      value = attempt[field]
+                      assert value is None or isinstance(value, (int, float))
 
           if report['complete']:
               assert observed_sample_ids == expected_sample_ids
