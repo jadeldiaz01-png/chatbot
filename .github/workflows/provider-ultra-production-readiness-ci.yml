@@ -33,6 +33,7 @@ jobs:
 
           assert data['schema_version'] == '1.0'
           assert data['repository'] == 'jadeldiaz01-png/chatbot'
+          assert data['evidence_anchor_main_sha'] == '3faf9fa295ec36e5408e49493c4c9af1c485eeb8'
           assert data['provider'] == 'nvidia_nim'
           assert data['model'] == 'nvidia/nemotron-3-ultra-550b-a55b'
           assert data['target_p95_seconds'] == 8.0
@@ -40,11 +41,11 @@ jobs:
           assert data['promotion_authorized'] is False
           assert data['current_runtime']['provider'] == 'openai'
           assert data['current_runtime']['migration_to_nvidia_active'] is False
-          assert data['total_certified_provider_calls'] == 200
+          assert data['total_certified_provider_calls'] == 220
 
           evidence = data['certified_evidence']
-          assert len(evidence) == 2
-          assert sum(item['calls'] for item in evidence) == 200
+          assert len(evidence) == 3
+          assert sum(item['calls'] for item in evidence) == 220
           assert all(item['errors'] == 0 for item in evidence)
 
           expected = {
@@ -62,7 +63,15 @@ jobs:
                   'artifact_digest': 'sha256:f0398c310457360100be8267494580e775b67bd18472af55fc989d26d2e94ff6',
                   'calls': 80,
               },
+              'provider_ultra_production_shaped_latency': {
+                  'run_id': 36944743622,
+                  'git_sha': '3faf9fa295ec36e5408e49493c4c9af1c485eeb8',
+                  'artifact_id': 11200899429,
+                  'artifact_digest': 'sha256:fda633904b36895262dd1c497f5b16f907329e3cfecb63370c0b233c0a7258d2',
+                  'calls': 20,
+              },
           }
+
           expected_results = {
               'provider_ultra_raw_http_stream_vs_nonstream_confirmatory': {
                   'stream': {
@@ -110,6 +119,19 @@ jobs:
                       'strict_slo_met': True,
                   },
               },
+              'provider_ultra_production_shaped_latency': {
+                  'aggregate': {
+                      'observed': 20,
+                      'completed': 20,
+                      'p50_total_seconds': 7.846,
+                      'p95_total_seconds': 57.3164,
+                      'max_total_seconds': 58.4615,
+                      'calls_over_slo': 10,
+                      'strict_slo_met': False,
+                      'total_http_attempts': 23,
+                      'total_retries': 3,
+                  },
+              },
           }
 
           for item in evidence:
@@ -117,19 +139,41 @@ jobs:
               assert name in expected
               for key, value in expected[name].items():
                   assert item[key] == value
-              assert item['contract'] == {
-                  'prompt': 'Reply with exactly: OK',
-                  'max_tokens': 8,
-                  'timeout_seconds': 15,
-                  'max_retries': 0,
-                  'pacing_seconds': 12,
-              }
-              assert item['results'] == expected_results[name]
               assert re.fullmatch(r'sha256:[0-9a-f]{64}', item['artifact_digest'])
+              assert item['results'] == expected_results[name]
 
+              if name in {
+                  'provider_ultra_raw_http_stream_vs_nonstream_confirmatory',
+                  'provider_ultra_sdk_vs_raw_http',
+              }:
+                  assert item['contract'] == {
+                      'prompt': 'Reply with exactly: OK',
+                      'max_tokens': 8,
+                      'timeout_seconds': 15,
+                      'max_retries': 0,
+                      'pacing_seconds': 12,
+                  }
+              else:
+                  assert item['complete'] is True
+                  assert item['quality_evaluation'] is False
+                  assert item['request_ids_present'] is False
+                  assert item['contract'] == {
+                      'system_instructions_source': 'streamlit_app.py:SYSTEM_INSTRUCTIONS',
+                      'system_instructions_sha256': '4c743c2423a91ac2670cc725491a3f2aec850f16c3f8139212519788b4f5f0b3',
+                      'max_tokens': 512,
+                      'temperature': 1.0,
+                      'top_p': 0.95,
+                      'enable_thinking': False,
+                      'stream': False,
+                      'timeout_seconds': 45,
+                      'max_retries': 2,
+                      'pacing_seconds': 12,
+                  }
+
+          minimal = [item for item in evidence if item['experiment'] != 'provider_ultra_production_shaped_latency']
           all_modes = [
               result
-              for item in evidence
+              for item in minimal
               for result in item['results'].values()
           ]
           derived_minimal_slo_pass = (
@@ -139,16 +183,33 @@ jobs:
               and sum(result['observed'] for result in all_modes) == 200
           )
 
+          production = next(
+              item for item in evidence
+              if item['experiment'] == 'provider_ultra_production_shaped_latency'
+          )
+          aggregate = production['results']['aggregate']
+          derived_production_shaped_pass = (
+              production['complete'] is True
+              and production['errors'] == 0
+              and aggregate['observed'] == 20
+              and aggregate['completed'] == 20
+              and aggregate['strict_slo_met'] is True
+              and aggregate['p95_total_seconds'] <= data['target_p95_seconds']
+          )
+
           adjudication = data['adjudication']
           assert adjudication['minimal_provider_path_p95_slo_pass'] is derived_minimal_slo_pass
           assert derived_minimal_slo_pass is True
+          assert adjudication['production_shaped_latency_evidence_complete'] is True
+          assert adjudication['production_shaped_latency_p95_slo_pass'] is derived_production_shaped_pass
+          assert derived_production_shaped_pass is False
           assert adjudication['sdk_specific_causal_hypothesis_supported'] is False
           assert adjudication['automatic_transport_or_mode_promotion_authorized'] is False
           assert adjudication['production_workload_certified'] is False
 
           blockers = set(data['blocking_evidence'])
           required_blockers = {
-              'production_shaped_latency_with_real_system_instructions_and_realistic_output_budget',
+              'production_shaped_latency_p95_slo_failure',
               'production_quality_evaluation_on_current_main',
               'end_to_end_content_safety_evaluation',
               'provider_privacy_and_data_handling_review',
@@ -157,6 +218,8 @@ jobs:
               'independent_human_activation_approval',
           }
           assert required_blockers <= blockers
+          assert 'production_shaped_latency_with_real_system_instructions_and_realistic_output_budget' not in blockers
+
           print('PROVIDER_ULTRA_PRODUCTION_READINESS=PASS')
           PY
 
