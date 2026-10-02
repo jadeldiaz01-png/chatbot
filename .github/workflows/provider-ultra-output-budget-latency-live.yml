@@ -1,0 +1,222 @@
+name: provider-ultra-output-budget-latency-live
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Exact main SHA authorized for this one output-budget diagnostic execution
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-ultra-output-budget-latency-live
+  cancel-in-progress: false
+
+jobs:
+  provider-ultra-output-budget-latency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: model-evaluation
+    env:
+      EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+      OUTPUT_DIR: provider-ultra-output-budget-latency
+      REPORT_PATH: provider-ultra-output-budget-latency/report.json
+
+    steps:
+      - name: Enforce exact-SHA human execution boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test -n "${EXPECTED_MAIN_SHA}"
+          test "${EXPECTED_MAIN_SHA}" = "${GITHUB_SHA}"
+          echo "EXACT_SHA_HUMAN_BOUNDARY=PASS"
+          echo "AUTHORIZED_SHA=${GITHUB_SHA}"
+          echo "RERUN=NOT_AUTHORIZED"
+          echo "PRODUCTION_CHANGE=NO"
+          echo "PROMOTION=NOT_AUTHORIZED"
+
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify checked-out SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Validate preregistered single-variable contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_provider_ultra_production_shaped_latency.py
+          python tests/test_provider_ultra_output_budget_latency.py
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path("scripts").resolve()))
+          import provider_ultra_output_budget_latency as experiment
+
+          system = experiment.load_system_instructions("streamlit_app.py")
+          baseline = experiment.baseline.build_request(system, "contract-probe")
+
+          assert experiment.MODEL == experiment.baseline.MODEL
+          assert experiment.SYSTEM_INSTRUCTIONS_SHA256 == experiment.baseline.SYSTEM_INSTRUCTIONS_SHA256
+          assert experiment.PROMPT_CASES == experiment.baseline.PROMPT_CASES
+          assert experiment.REPETITIONS_PER_PROMPT == experiment.baseline.REPETITIONS_PER_PROMPT
+          assert experiment.OUTPUT_BUDGETS == (128, 256, 512)
+          assert experiment.CALLS_PER_BUDGET == 20
+          assert experiment.TOTAL_PLANNED_CALLS == 60
+          assert experiment.PRODUCTION_CONFIGURATION_CHANGED is False
+          assert experiment.PRODUCTION_RUNTIME_PARAMETER_CHANGE_AUTHORIZED is False
+          assert experiment.PROMOTION_AUTHORIZED is False
+
+          for budget in experiment.OUTPUT_BUDGETS:
+              request = experiment.build_request(
+                  system,
+                  "contract-probe",
+                  max_tokens=budget,
+              )
+              changed = {
+                  key
+                  for key in set(baseline) | set(request)
+                  if baseline.get(key) != request.get(key)
+              }
+              assert changed == {"max_tokens"}
+
+          print("OUTPUT_BUDGET_PREREGISTRATION=PASS")
+          PY
+
+      - name: Initialize partial evidence envelope
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${OUTPUT_DIR}"
+          python - <<'PY'
+          import os
+          import sys
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path("scripts").resolve()))
+          import provider_ultra_output_budget_latency as experiment
+
+          report = experiment.persist_report(
+              os.environ["REPORT_PATH"],
+              base_url=experiment.DEFAULT_BASE_URL,
+              results=[],
+              created_at=datetime.now(UTC).isoformat(),
+          )
+          experiment.validate_report(report)
+          print("PARTIAL_EVIDENCE_ENVELOPE=READY")
+          PY
+
+      - name: Run preregistered output-budget latency diagnostic
+        id: diagnostic
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -u
+          if [ -z "${NVIDIA_API_KEY:-}" ]; then
+            echo "NVIDIA_API_KEY is not configured for model-evaluation" >&2
+            echo "exit_code=2" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          set +e
+          python scripts/provider_ultra_output_budget_latency.py --output "${REPORT_PATH}"
+          code=$?
+          set -e
+          echo "exit_code=${code}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Validate immutable output-budget report
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          report_path = Path(os.environ["REPORT_PATH"])
+          if not report_path.is_file():
+              raise SystemExit("report.json missing")
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          sys.path.insert(0, str(Path("scripts").resolve()))
+          import provider_ultra_output_budget_latency as experiment
+
+          experiment.validate_report(
+              report,
+              expected_git_sha=os.environ["GITHUB_SHA"],
+          )
+
+          assert report["experimental_parameter"] == "max_tokens"
+          assert report["output_budgets"] == [128, 256, 512]
+          assert report["fixed_request_contract"] == {
+              "temperature": 1.0,
+              "top_p": 0.95,
+              "enable_thinking": False,
+              "stream": False,
+              "timeout_seconds": 45.0,
+              "max_retries": 2,
+              "pacing_seconds": 12.0,
+          }
+
+          print(
+              f"OUTPUT_BUDGET_REPORT=PASS complete={report['complete']} "
+              f"observed={len(report['results'])}"
+          )
+          PY
+
+      - name: Upload immutable output-budget report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: provider-ultra-output-budget-latency-${{ github.sha }}
+          path: provider-ultra-output-budget-latency/report.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Adjudicate diagnostic process completion
+        if: always()
+        shell: bash
+        env:
+          DIAGNOSTIC_EXIT_CODE: ${{ steps.diagnostic.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          test "${DIAGNOSTIC_EXIT_CODE:-missing}" = "0"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report = json.loads(Path(os.environ["REPORT_PATH"]).read_text(encoding="utf-8"))
+          if report.get("complete") is not True:
+              raise SystemExit("diagnostic report is partial; live execution is not complete")
+          if report["summary"]["observed"] != 60:
+              raise SystemExit("expected exactly 60 observations")
+          for budget in ("128", "256", "512"):
+              cohort = report["summary"]["cohorts"][budget]
+              if cohort["observed"] != 20:
+                  raise SystemExit(f"budget {budget} does not have 20 observations")
+          print("OUTPUT_BUDGET_DIAGNOSTIC_PROCESS=COMPLETE")
+          print("PRODUCTION_CHANGE=NO")
+          print("PROMOTION=NOT_AUTHORIZED")
+          PY
