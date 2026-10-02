@@ -60,6 +60,7 @@ jobs:
           assert probe.REPETITIONS_PER_PROMPT == 4
           assert len(probe.PROMPT_CASES) == 5
           assert probe.TOTAL_PLANNED_CALLS == 20
+          assert probe.ATTRIBUTION_SCHEMA_VERSION == '2026-10-02.1'
           assert probe.FUNCTIONAL_CONFIGURATION_CHANGED is False
           assert probe.PRODUCTION_RUNTIME_PARAMETER_CHANGE_AUTHORIZED is False
           assert probe.PROMOTION_AUTHORIZED is False
@@ -92,6 +93,11 @@ jobs:
               '"output_tokens"',
               '"total_tokens"',
               '"request_ids"',
+              '"latency_attribution"',
+              '"request_to_headers_seconds"',
+              '"final_headers_to_completion_seconds"',
+              '"retry_path_seconds"',
+              '"output_token_buckets"',
           )
           missing = [item for item in required if item not in source]
           if missing:
