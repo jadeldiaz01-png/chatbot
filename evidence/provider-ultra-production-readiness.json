@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "system": "jadel-chatbot",
   "repository": "jadeldiaz01-png/chatbot",
-  "evidence_anchor_main_sha": "33f99117e79847146c4b3ddd6b397b6dbd5f7424",
+  "evidence_anchor_main_sha": "3faf9fa295ec36e5408e49493c4c9af1c485eeb8",
   "adjudication_date": "2026-10-01",
   "provider": "nvidia_nim",
   "model": "nvidia/nemotron-3-ultra-550b-a55b",
@@ -90,17 +90,56 @@
           "strict_slo_met": true
         }
       }
+    },
+    {
+      "experiment": "provider_ultra_production_shaped_latency",
+      "run_id": 36944743622,
+      "git_sha": "3faf9fa295ec36e5408e49493c4c9af1c485eeb8",
+      "artifact_id": 11200899429,
+      "artifact_digest": "sha256:fda633904b36895262dd1c497f5b16f907329e3cfecb63370c0b233c0a7258d2",
+      "calls": 20,
+      "errors": 0,
+      "complete": true,
+      "quality_evaluation": false,
+      "request_ids_present": false,
+      "contract": {
+        "system_instructions_source": "streamlit_app.py:SYSTEM_INSTRUCTIONS",
+        "system_instructions_sha256": "4c743c2423a91ac2670cc725491a3f2aec850f16c3f8139212519788b4f5f0b3",
+        "max_tokens": 512,
+        "temperature": 1,
+        "top_p": 0.95,
+        "enable_thinking": false,
+        "stream": false,
+        "timeout_seconds": 45,
+        "max_retries": 2,
+        "pacing_seconds": 12
+      },
+      "results": {
+        "aggregate": {
+          "observed": 20,
+          "completed": 20,
+          "p50_total_seconds": 7.846,
+          "p95_total_seconds": 57.3164,
+          "max_total_seconds": 58.4615,
+          "calls_over_slo": 10,
+          "strict_slo_met": false,
+          "total_http_attempts": 23,
+          "total_retries": 3
+        }
+      }
     }
   ],
-  "total_certified_provider_calls": 200,
+  "total_certified_provider_calls": 220,
   "adjudication": {
     "minimal_provider_path_p95_slo_pass": true,
     "sdk_specific_causal_hypothesis_supported": false,
     "automatic_transport_or_mode_promotion_authorized": false,
-    "production_workload_certified": false
+    "production_workload_certified": false,
+    "production_shaped_latency_evidence_complete": true,
+    "production_shaped_latency_p95_slo_pass": false
   },
   "blocking_evidence": [
-    "production_shaped_latency_with_real_system_instructions_and_realistic_output_budget",
+    "production_shaped_latency_p95_slo_failure",
     "production_quality_evaluation_on_current_main",
     "end_to_end_content_safety_evaluation",
     "provider_privacy_and_data_handling_review",
