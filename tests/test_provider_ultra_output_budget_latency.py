@@ -38,7 +38,11 @@ class OutputBudgetLatencyTests(unittest.TestCase):
                 for key in set(baseline_request) | set(request)
                 if baseline_request.get(key) != request.get(key)
             }
-            self.assertEqual(changed, {"max_tokens"})
+            self.assertTrue(changed.issubset({"max_tokens"}))
+            if budget == baseline_request["max_tokens"]:
+                self.assertEqual(changed, set())
+            else:
+                self.assertEqual(changed, {"max_tokens"})
             self.assertEqual(request["max_tokens"], budget)
 
     def test_invalid_budget_fails_closed(self) -> None:
