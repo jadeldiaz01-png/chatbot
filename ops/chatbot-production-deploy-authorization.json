@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "authorized": true,
+  "authorized_base_sha": "06ce2c7797b656e24601c81272933d727ef9d907",
+  "release_workflow": "Chatbot runtime release candidate",
+  "deploy_workflow": "Chatbot production deployment",
+  "run_once": true,
+  "runtime_provider": "openai",
+  "runtime_model": "gpt-5.6-luna",
+  "host_bind_address": "127.0.0.1",
+  "host_bind_port": 18501,
+  "public_exposure_mutation": false,
+  "financial_execution": false,
+  "external_action_authority": false,
+  "rollback_required": true,
+  "tailscale_only_deployer": true
+}
