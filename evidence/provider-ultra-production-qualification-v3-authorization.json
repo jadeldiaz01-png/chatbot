@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "authorized": true,
+  "authorized_base_sha": "c88a3ca12e0b0648fbcd2c80d80e6a85afa1ed05",
+  "experiment": "provider_ultra_production_qualification_v3",
+  "experiment_spec_version": "2026-10-03.3",
+  "candidate_system_instructions_sha256": "79f6e3eb01e7edaaed0fd63628a5c40fe2209211631db3bf357490ee2e7c843a",
+  "max_tokens": 128,
+  "planned_calls": 20,
+  "run_once": true,
+  "production_change": false,
+  "promotion_authorized": false,
+  "rerun_authorized": false,
+  "supersedes_failed_run_id": 37092012242,
+  "supersedes_failed_artifact_digest": "sha256:a9f65eb02f07a40e66c8ea27d9d0177d4f431996746ca42784ae01cd51d07117",
+  "change_reason": "candidate_system_instructions_v3"
+}
