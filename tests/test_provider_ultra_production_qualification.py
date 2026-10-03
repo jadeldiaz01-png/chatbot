@@ -14,7 +14,7 @@ SPEC.loader.exec_module(MODULE)
 
 class ProductionQualificationTests(unittest.TestCase):
     def test_request_differs_from_baseline_only_by_max_tokens(self) -> None:
-        system = MODULE.baseline.load_system_instructions("streamlit_app.py")
+        system = MODULE.baseline.load_system_instructions()
         baseline_request = MODULE.baseline.build_request(system, "hello")
         request = MODULE.build_request(system, "hello")
         changed = {

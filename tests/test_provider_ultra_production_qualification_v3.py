@@ -23,7 +23,7 @@ class ProductionQualificationV3Tests(unittest.TestCase):
         )
 
     def test_v3_changes_only_system_message_relative_to_v2_candidate(self) -> None:
-        old_system = MODULE.baseline.load_system_instructions("streamlit_app.py")
+        old_system = MODULE.baseline.load_system_instructions()
         new_system = MODULE.load_candidate_system_instructions()
         prompt = MODULE.baseline.PROMPT_CASES[0][1]
 

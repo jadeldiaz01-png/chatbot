@@ -10,15 +10,28 @@ SPEC.loader.exec_module(MODULE)
 
 
 class ProductionShapedLatencyTests(unittest.TestCase):
-    def test_system_instructions_are_bound_to_current_runtime_literal(self) -> None:
-        value = MODULE.load_system_instructions("streamlit_app.py")
+    def test_system_instructions_are_bound_to_historical_snapshot(self) -> None:
+        value = MODULE.load_system_instructions()
         self.assertEqual(
             MODULE.prompt_digest(value),
             MODULE.SYSTEM_INSTRUCTIONS_SHA256,
         )
+        self.assertEqual(
+            MODULE.SYSTEM_INSTRUCTIONS_SOURCE,
+            "evidence/provider-ultra-system-instructions-v1.json:system_instructions",
+        )
+
+    def test_current_runtime_prompt_is_independent_from_historical_contract(self) -> None:
+        runtime_source = pathlib.Path("streamlit_app.py").read_text(encoding="utf-8")
+        self.assertIn("SYSTEM_INSTRUCTIONS", runtime_source)
+        historical = MODULE.load_system_instructions()
+        self.assertNotEqual(
+            MODULE.prompt_digest(historical),
+            "79f6e3eb01e7edaaed0fd63628a5c40fe2209211631db3bf357490ee2e7c843a",
+        )
 
     def test_frozen_request_contract(self) -> None:
-        system = MODULE.load_system_instructions("streamlit_app.py")
+        system = MODULE.load_system_instructions()
         request = MODULE.build_request(system, "hello")
         self.assertEqual(request["model"], "nvidia/nemotron-3-ultra-550b-a55b")
         self.assertEqual(request["messages"][0], {"role": "system", "content": system})

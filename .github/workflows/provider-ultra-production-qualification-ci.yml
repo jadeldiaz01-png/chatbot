@@ -9,7 +9,6 @@ on:
       - ".github/workflows/provider-ultra-production-qualification-live.yml"
       - "evidence/provider-ultra-production-qualification-authorization.json"
       - "scripts/provider_ultra_production_shaped_latency.py"
-      - "streamlit_app.py"
       - "requirements.lock"
 
 permissions:

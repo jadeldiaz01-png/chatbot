@@ -70,7 +70,7 @@ jobs:
           sys.path.insert(0, str(Path("scripts").resolve()))
           import provider_ultra_output_budget_latency as experiment
 
-          system = experiment.load_system_instructions("streamlit_app.py")
+          system = experiment.load_system_instructions()
           baseline = experiment.baseline.build_request(system, "contract-probe")
 
           assert experiment.MODEL == experiment.baseline.MODEL
