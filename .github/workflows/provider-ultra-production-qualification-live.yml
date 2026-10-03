@@ -1,0 +1,194 @@
+name: provider-ultra-production-qualification-live
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "evidence/provider-ultra-production-qualification-authorization.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-ultra-production-qualification-live
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: model-evaluation
+    env:
+      EXPECTED_BEFORE_SHA: 59f27b12776ddb38fba223a9164321d32c8acc2d
+      OUTPUT_DIR: provider-ultra-production-qualification
+      QUALIFICATION_REPORT_PATH: provider-ultra-production-qualification/report.json
+
+    steps:
+      - name: Enforce one-shot main lineage
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "${BEFORE_SHA}" = "${EXPECTED_BEFORE_SHA}"
+          test "${GITHUB_RUN_ATTEMPT}" = "1"
+          echo "ONE_SHOT_LINEAGE=PASS"
+          echo "RERUN=NOT_AUTHORIZED"
+          echo "PRODUCTION_CHANGE=NO"
+          echo "PROMOTION=NOT_AUTHORIZED"
+
+      - name: Checkout immutable merged revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify checked-out SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git status --porcelain)" = ""
+
+      - name: Validate authorization marker and frozen contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_provider_ultra_production_shaped_latency.py
+          python tests/test_provider_ultra_production_qualification.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(
+              Path("evidence/provider-ultra-production-qualification-authorization.json")
+              .read_text(encoding="utf-8")
+          )
+          assert data["authorized"] is True
+          assert data["authorized_base_sha"] == "59f27b12776ddb38fba223a9164321d32c8acc2d"
+          assert data["experiment"] == "provider_ultra_production_qualification"
+          assert data["max_tokens"] == 128
+          assert data["planned_calls"] == 20
+          assert data["run_once"] is True
+          assert data["production_change"] is False
+          assert data["promotion_authorized"] is False
+          assert data["rerun_authorized"] is False
+          print("QUALIFICATION_AUTHORIZATION=PASS")
+          PY
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Initialize partial evidence envelope
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${OUTPUT_DIR}"
+          python - <<'PY'
+          import os
+          import sys
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          sys.path.insert(0, str(Path("scripts").resolve()))
+          import provider_ultra_production_qualification as qualification
+
+          report = qualification.persist_report(
+              os.environ["QUALIFICATION_REPORT_PATH"],
+              results=[],
+              created_at=datetime.now(UTC).isoformat(),
+          )
+          qualification.validate_report(report)
+          print("QUALIFICATION_PARTIAL_EVIDENCE=READY")
+          PY
+
+      - name: Run production qualification
+        id: qualification
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -u
+          if [ -z "${NVIDIA_API_KEY:-}" ]; then
+            echo "NVIDIA_API_KEY is not configured for model-evaluation" >&2
+            echo "exit_code=2" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          set +e
+          python scripts/provider_ultra_production_qualification.py
+          code=$?
+          set -e
+          echo "exit_code=${code}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Validate immutable qualification report
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          path = Path(os.environ["QUALIFICATION_REPORT_PATH"])
+          if not path.is_file():
+              raise SystemExit("qualification report missing")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          sys.path.insert(0, str(Path("scripts").resolve()))
+          import provider_ultra_production_qualification as qualification
+          qualification.validate_report(report, expected_sha=os.environ["GITHUB_SHA"])
+          print(
+              f"QUALIFICATION_REPORT=PASS complete={report['complete']} "
+              f"observed={report['summary']['observed']} "
+              f"quality_pass_rate={report['summary']['quality_pass_rate']} "
+              f"p95={report['summary']['p95_total_seconds']}"
+          )
+          PY
+
+      - name: Upload immutable qualification report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: provider-ultra-production-qualification-${{ github.sha }}
+          path: provider-ultra-production-qualification/report.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Adjudicate qualification gates
+        if: always()
+        shell: bash
+        env:
+          QUALIFICATION_EXIT_CODE: ${{ steps.qualification.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          test "${QUALIFICATION_EXIT_CODE:-missing}" = "0"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report = json.loads(
+              Path(os.environ["QUALIFICATION_REPORT_PATH"]).read_text(encoding="utf-8")
+          )
+          summary = report["summary"]
+          test_values = {
+              "complete": report["complete"] is True,
+              "observed": summary["observed"] == 20,
+              "completed": summary["completed"] == 20,
+              "errors": summary["errors"] == 0,
+              "quality_gate_pass": summary["quality_gate_pass"] is True,
+              "latency_gate_pass": summary["latency_gate_pass"] is True,
+          }
+          failed = [key for key, value in test_values.items() if not value]
+          if failed:
+              raise SystemExit(f"qualification gates failed: {failed}")
+          print("PROVIDER_ULTRA_PRODUCTION_QUALIFICATION=PASS")
+          print("PRODUCTION_CHANGE=NO")
+          print("PROMOTION=NOT_AUTHORIZED")
+          PY
