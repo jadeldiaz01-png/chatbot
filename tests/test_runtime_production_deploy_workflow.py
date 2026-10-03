@@ -92,3 +92,14 @@ def test_post_deploy_verifies_image_sha_label_bind_and_health() -> None:
     assert "CHATBOT_PRODUCTION_DEPLOYMENT=PASS" in text
     assert "PUBLIC_EXPOSURE_MUTATION=NO" in text
     assert "FINANCIAL_EXECUTION=NO" in text
+
+
+if __name__ == "__main__":
+    test_release_candidate_exports_deployable_image()
+    test_one_shot_authorization_is_exact_and_nonfinancial()
+    test_deployment_consumes_only_certified_release()
+    test_deployment_is_tailscale_only_and_unprivileged()
+    test_remote_deploy_preserves_local_bind_and_rollback()
+    test_remote_preflight_requires_production_api_key_without_reading_value()
+    test_post_deploy_verifies_image_sha_label_bind_and_health()
+    print("RUNTIME_PRODUCTION_DEPLOY_WORKFLOW_TESTS=PASS")
