@@ -15,8 +15,24 @@ jobs:
     steps:
       - name: Checkout immutable revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify production runtime contract
+        run: python tests/test_runtime_production_contract.py
+
       - name: Build runtime container
         run: docker build --pull -t jadel-chatbot-runtime:${GITHUB_SHA} .
+
+      - name: Verify minimal immutable image contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/sh jadel-chatbot-runtime:${GITHUB_SHA} -c '
+            test -f /app/streamlit_app.py
+            test ! -e /app/evidence
+            test ! -e /app/scripts
+            test ! -e /app/tests
+            test ! -e /app/.git
+          '
+          echo 'CHATBOT_MINIMAL_IMAGE=PASS'
       - name: Start and verify health
         shell: bash
         run: |
