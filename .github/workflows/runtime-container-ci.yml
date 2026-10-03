@@ -16,7 +16,9 @@ jobs:
       - name: Checkout immutable revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Verify production runtime contract
-        run: python tests/test_runtime_production_contract.py
+        run: |
+          python tests/test_runtime_production_contract.py
+          python tests/test_runtime_deploy_contract.py
 
       - name: Build runtime container
         run: docker build --pull -t jadel-chatbot-runtime:${GITHUB_SHA} .

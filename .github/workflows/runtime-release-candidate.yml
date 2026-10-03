@@ -1,0 +1,138 @@
+name: Chatbot runtime release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact protected main SHA to certify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chatbot-runtime-release-candidate
+  cancel-in-progress: false
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      IMAGE_NAME: jadel-chatbot-runtime
+
+    steps:
+      - name: Enforce exact main SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          echo RELEASE_EXACT_SHA=PASS
+
+      - name: Checkout immutable revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify protected main lineage
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags https://github.com/$GITHUB_REPOSITORY.git +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$EXPECTED_SHA"
+          test "$(git status --porcelain)" = ""
+          python tests/test_runtime_production_contract.py
+          python tests/test_runtime_deploy_contract.py
+          echo RELEASE_CONTRACTS=PASS
+
+      - name: Build immutable runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull -t "$IMAGE_NAME:$EXPECTED_SHA" .
+          image_id="$(docker image inspect "$IMAGE_NAME:$EXPECTED_SHA" --format '{{.Id}}')"
+          test -n "$image_id"
+          echo "IMAGE_ID=$image_id" >> "$GITHUB_ENV"
+          echo RELEASE_IMAGE_BUILD=PASS
+
+      - name: Smoke test candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name chatbot-release-candidate -p 127.0.0.1:18503:8501             -e OPENAI_API_KEY=dummy-release-smoke-key "$IMAGE_NAME:$EXPECTED_SHA"
+          trap 'docker logs chatbot-release-candidate || true; docker rm -f chatbot-release-candidate >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 3 http://127.0.0.1:18503/_stcore/health >/dev/null; then
+              echo RELEASE_HEALTH=PASS
+              exit 0
+            fi
+            sleep 2
+          done
+          echo RELEASE_HEALTH=FAIL >&2
+          exit 20
+
+      - name: Generate release evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-evidence
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+
+          lock = Path("requirements.lock")
+          lock_sha = hashlib.sha256(lock.read_bytes()).hexdigest()
+          components = []
+          for line in lock.read_text(encoding="utf-8").splitlines():
+              line=line.strip()
+              if not line or line.startswith("#"):
+                  continue
+              left=line.split(" --hash=",1)[0]
+              name,version=left.split("==",1)
+              components.append({"type":"library","name":name,"version":version})
+
+          sbom={
+              "bomFormat":"CycloneDX",
+              "specVersion":"1.6",
+              "version":1,
+              "metadata":{"component":{"type":"application","name":"jadel-chatbot"}},
+              "components":components,
+          }
+          Path("release-evidence/sbom.cdx.json").write_text(
+              json.dumps(sbom,indent=2,sort_keys=True)+"\n",encoding="utf-8"
+          )
+          evidence={
+              "schema_version":"1.0",
+              "source_sha":os.environ["EXPECTED_SHA"],
+              "image_id":os.environ["IMAGE_ID"],
+              "requirements_lock_sha256":lock_sha,
+              "provider":"openai",
+              "model":"gpt-5.6-luna",
+              "container_port":8501,
+              "production_bind_contract":"127.0.0.1:18501",
+              "public_exposure_mutation":False,
+              "financial_execution":False,
+              "external_action_authority":False,
+          }
+          Path("release-evidence/release.json").write_text(
+              json.dumps(evidence,indent=2,sort_keys=True)+"\n",encoding="utf-8"
+          )
+          PY
+          cp requirements.lock release-evidence/requirements.lock
+          sha256sum release-evidence/* > release-evidence/SHA256SUMS
+          echo RELEASE_EVIDENCE=PASS
+
+      - name: Upload immutable release evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: chatbot-runtime-release-${{ inputs.expected_sha }}
+          path: release-evidence/
+          if-no-files-found: error
+          retention-days: 30
