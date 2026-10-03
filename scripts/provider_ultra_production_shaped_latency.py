@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import hashlib
 import json
 import math
@@ -17,7 +16,7 @@ EXPERIMENT_NAME = "provider_ultra_production_shaped_latency"
 EXPERIMENT_SPEC_VERSION = "2026-10-01.1"
 DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
-SYSTEM_INSTRUCTIONS_SOURCE = "streamlit_app.py:SYSTEM_INSTRUCTIONS"
+SYSTEM_INSTRUCTIONS_SOURCE = "evidence/provider-ultra-system-instructions-v1.json:system_instructions"
 SYSTEM_INSTRUCTIONS_SHA256 = "4c743c2423a91ac2670cc725491a3f2aec850f16c3f8139212519788b4f5f0b3"
 
 MAX_TOKENS = 512
@@ -72,24 +71,25 @@ def percentile(values: list[float], fraction: float) -> float | None:
     return round(ordered[index], 4)
 
 
-def load_system_instructions(path: str | Path = "streamlit_app.py") -> str:
-    source = Path(path).read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(isinstance(target, ast.Name) and target.id == "SYSTEM_INSTRUCTIONS" for target in node.targets):
-            continue
-        value = ast.literal_eval(node.value)
-        if not isinstance(value, str):
-            raise ValueError("SYSTEM_INSTRUCTIONS must be a string literal")
-        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
-        if digest != SYSTEM_INSTRUCTIONS_SHA256:
-            raise ValueError(
-                "SYSTEM_INSTRUCTIONS changed from preregistered production-shaped contract"
-            )
-        return value
-    raise ValueError("SYSTEM_INSTRUCTIONS not found in streamlit_app.py")
+def load_system_instructions(
+    path: str | Path = "evidence/provider-ultra-system-instructions-v1.json",
+) -> str:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if data.get("schema_version") != "1.0":
+        raise ValueError("historical system-instructions snapshot schema mismatch")
+    if data.get("experiment") != EXPERIMENT_NAME:
+        raise ValueError("historical system-instructions experiment mismatch")
+    value = data.get("system_instructions")
+    if not isinstance(value, str):
+        raise ValueError("historical system instructions must be a string")
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    if digest != SYSTEM_INSTRUCTIONS_SHA256:
+        raise ValueError(
+            "historical SYSTEM_INSTRUCTIONS changed from preregistered contract"
+        )
+    if data.get("system_instructions_sha256") != digest:
+        raise ValueError("historical system-instructions snapshot digest mismatch")
+    return value
 
 
 def prompt_digest(prompt: str) -> str:
