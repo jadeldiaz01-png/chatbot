@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "service": "jadel-chatbot",
+  "runtime_provider": "openai",
+  "runtime_model": "gpt-5.6-luna",
+  "container_port": 8501,
+  "host_bind_address": "127.0.0.1",
+  "host_bind_port": 18501,
+  "health_path": "/_stcore/health",
+  "container_name": "jadel-chatbot-production",
+  "restart_policy": "unless-stopped",
+  "public_exposure_mutation": false,
+  "financial_execution": false,
+  "external_action_authority": false,
+  "rollback_required": true,
+  "tailscale_only_deployer": true
+}
