@@ -14,7 +14,7 @@ SPEC.loader.exec_module(MODULE)
 
 class OutputBudgetLatencyTests(unittest.TestCase):
     def test_baseline_contract_is_reused_without_mutation(self) -> None:
-        system = MODULE.load_system_instructions("streamlit_app.py")
+        system = MODULE.load_system_instructions()
         baseline_request = MODULE.baseline.build_request(system, "hello")
 
         self.assertEqual(MODULE.MODEL, MODULE.baseline.MODEL)
@@ -46,7 +46,7 @@ class OutputBudgetLatencyTests(unittest.TestCase):
             self.assertEqual(request["max_tokens"], budget)
 
     def test_invalid_budget_fails_closed(self) -> None:
-        system = MODULE.load_system_instructions("streamlit_app.py")
+        system = MODULE.load_system_instructions()
         with self.assertRaises(ValueError):
             MODULE.build_request(system, "hello", max_tokens=64)
 
