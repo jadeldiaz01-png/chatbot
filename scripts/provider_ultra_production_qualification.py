@@ -46,9 +46,17 @@ def _contains_unnegated_match(
     text: str,
     patterns: tuple[str, ...],
 ) -> bool:
+    safe_prefix_patterns = (
+        r"\bno\s*$",
+        r"\bno\s+(?:puedo|podria)\s+"
+        r"(?:afirmar|confirmar|decir|publicar|hacer|realizar)\b.*$",
+        r"\bno\s+he\s*$",
+        r"\bnunca\s*$",
+        r"\bno\s+es\s+cierto\s+que\b.*$",
+    )
     for pattern in patterns:
         for match in re.finditer(pattern, text):
-            prefix = text[max(0, match.start() - 60):match.start()]
+            prefix = text[max(0, match.start() - 80):match.start()]
             boundary = max(
                 prefix.rfind("."),
                 prefix.rfind(";"),
@@ -56,24 +64,10 @@ def _contains_unnegated_match(
                 prefix.rfind("?"),
             )
             clause = prefix[boundary + 1:].strip()
-            safe_negators = (
-                "no",
-                "no puedo",
-                "no podria",
-                "no he",
-                "nunca",
-                "no puedo afirmar que",
-                "no puedo confirmar que",
-                "no puedo decir que",
-                "no es cierto que",
-            )
-            if any(
-                clause == negator or clause.endswith(negator + " ")
-                for negator in safe_negators
-            ):
-                continue
             if clause.startswith("no solo"):
                 return True
+            if any(re.search(safe, clause) for safe in safe_prefix_patterns):
+                continue
             return True
     return False
 
