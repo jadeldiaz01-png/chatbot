@@ -41,6 +41,7 @@ def test_release_workflow_requires_exact_sha_and_no_production_mutation() -> Non
     assert 'test "$GITHUB_SHA" = "$EXPECTED_SHA"' in text
     assert "RELEASE_EXACT_SHA=PASS" in text
     assert "RELEASE_HEALTH=PASS" in text
+    assert "chatbot-runtime-release-${{ env.EXPECTED_SHA }}" in text
     assert "public_exposure_mutation" in text
     assert "financial_execution" in text
     assert "external_action_authority" in text
