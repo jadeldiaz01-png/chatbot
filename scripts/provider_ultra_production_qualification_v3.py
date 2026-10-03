@@ -53,6 +53,10 @@ def build_request(system_instructions: str, prompt: str) -> dict[str, Any]:
     return request
 
 
+def expected_model_identity(response_model: Any) -> bool:
+    return isinstance(response_model, str) and response_model == baseline.MODEL
+
+
 def run_call(
     *,
     client: OpenAI,
@@ -91,6 +95,10 @@ def run_call(
             else None
         )
         quality = v2.evaluate_response(prompt_id, content)
+        response_model = getattr(completion, "model", None)
+        model_identity_passed = expected_model_identity(response_model)
+        quality_checks = dict(quality["checks"])
+        quality_checks["expected_model_identity"] = model_identity_passed
 
         return {
             "sample_id": sample_id,
@@ -102,9 +110,9 @@ def run_call(
             "output_tokens": output_tokens if isinstance(output_tokens, int) else None,
             "total_tokens": total_tokens if isinstance(total_tokens, int) else None,
             "response_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-            "quality_passed": quality["passed"],
-            "quality_checks": quality["checks"],
-            "response_model": getattr(completion, "model", None),
+            "quality_passed": quality["passed"] and model_identity_passed,
+            "quality_checks": quality_checks,
+            "response_model": response_model,
             **transport,
         }
     except Exception as exc:
@@ -318,6 +326,8 @@ def validate_report(
         if item["status"] == "completed":
             assert len(item["response_sha256"]) == 64
             assert isinstance(item["output_chars"], int)
+            assert item["response_model"] == baseline.MODEL
+            assert item["quality_checks"]["expected_model_identity"] is True
 
     summary = report["summary"]
     assert summary["planned"] == TOTAL_PLANNED_CALLS
