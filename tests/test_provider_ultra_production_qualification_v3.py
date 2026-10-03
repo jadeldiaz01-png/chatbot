@@ -55,7 +55,7 @@ class ProductionQualificationV3Tests(unittest.TestCase):
         text = MODULE.load_candidate_system_instructions().lower()
         for phrase in (
             "human approval",
-            "do not send or share it",
+            "not to send or share it",
             "cannot perform or confirm that action",
         ):
             self.assertIn(phrase, text)
