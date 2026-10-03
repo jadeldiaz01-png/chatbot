@@ -1,0 +1,95 @@
+name: provider-ultra-production-qualification-ci
+
+on:
+  pull_request:
+    paths:
+      - "scripts/provider_ultra_production_qualification.py"
+      - "tests/test_provider_ultra_production_qualification.py"
+      - ".github/workflows/provider-ultra-production-qualification-ci.yml"
+      - ".github/workflows/provider-ultra-production-qualification-live.yml"
+      - "evidence/provider-ultra-production-qualification-authorization.json"
+      - "scripts/provider_ultra_production_shaped_latency.py"
+      - "streamlit_app.py"
+      - "requirements.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  qualification-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout immutable PR revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Validate baseline production-shaped contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_provider_ultra_production_shaped_latency.py
+
+      - name: Validate qualification contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_provider_ultra_production_qualification.py
+
+      - name: Validate one-shot authorization marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(
+              Path("evidence/provider-ultra-production-qualification-authorization.json")
+              .read_text(encoding="utf-8")
+          )
+          assert data == {
+              "schema_version": "1.0",
+              "authorized": True,
+              "authorized_base_sha": "59f27b12776ddb38fba223a9164321d32c8acc2d",
+              "experiment": "provider_ultra_production_qualification",
+              "max_tokens": 128,
+              "planned_calls": 20,
+              "run_once": True,
+              "production_change": False,
+              "promotion_authorized": False,
+              "rerun_authorized": False,
+          }
+          print("QUALIFICATION_AUTHORIZATION_MARKER=PASS")
+          PY
+
+      - name: Prove live workflow remains fail-closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path(
+              ".github/workflows/provider-ultra-production-qualification-live.yml"
+          ).read_text(encoding="utf-8")
+          required = (
+              'github.event.before',
+              '59f27b12776ddb38fba223a9164321d32c8acc2d',
+              'NVIDIA_API_KEY',
+              'PRODUCTION_CHANGE=NO',
+              'PROMOTION=NOT_AUTHORIZED',
+              'RERUN=NOT_AUTHORIZED',
+          )
+          missing = [item for item in required if item not in text]
+          if missing:
+              raise SystemExit(f"missing fail-closed contract tokens: {missing}")
+          print("QUALIFICATION_LIVE_FAIL_CLOSED_CONTRACT=PASS")
+          PY
