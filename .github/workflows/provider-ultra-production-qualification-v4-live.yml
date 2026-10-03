@@ -1,0 +1,179 @@
+name: provider-ultra-production-qualification-v4-live
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "evidence/provider-ultra-production-qualification-v4-authorization.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-ultra-production-qualification-v4-live
+  cancel-in-progress: false
+
+jobs:
+  qualify-v4:
+    if: ${{ github.event.before == '263b75bbafae5cd1d7c58eeed92e59d85b5a79d3' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: model-evaluation
+    env:
+      EXPECTED_BEFORE_SHA: 263b75bbafae5cd1d7c58eeed92e59d85b5a79d3
+      QUALIFICATION_V4_REPORT_PATH: provider-ultra-production-qualification-v4/report.json
+
+    steps:
+      - name: Enforce one-shot v4 main lineage
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "${BEFORE_SHA}" = "${EXPECTED_BEFORE_SHA}"
+          test "${GITHUB_RUN_ATTEMPT}" = "1"
+          echo "QUALIFICATION_V4_ONE_SHOT_LINEAGE=PASS"
+          echo "RERUN=NOT_AUTHORIZED"
+          echo "PRODUCTION_CHANGE=NO"
+          echo "PROMOTION=NOT_AUTHORIZED"
+
+      - name: Checkout immutable merged revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify checked-out SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git status --porcelain)" = ""
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Validate v4 authorization and frozen contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_provider_ultra_production_qualification.py
+          python tests/test_provider_ultra_production_qualification_v4.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path("evidence/provider-ultra-production-qualification-v4-authorization.json").read_text())
+          assert data["authorized_base_sha"] == "263b75bbafae5cd1d7c58eeed92e59d85b5a79d3"
+          assert data["experiment_spec_version"] == "2026-10-03.4"
+          assert data["candidate_system_instructions_sha256"] == "34af3736681d32e9cf367de1b7f2b7e62e8b0f859d11c0bc2a57a132e87f8883"
+          assert data["max_tokens"] == 128
+          assert data["planned_calls"] == 20
+          assert data["run_once"] is True
+          assert data["production_change"] is False
+          assert data["promotion_authorized"] is False
+          assert data["rerun_authorized"] is False
+          print("QUALIFICATION_V4_AUTHORIZATION=PASS")
+          PY
+
+      - name: Initialize partial v4 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${QUALIFICATION_V4_REPORT_PATH}")"
+          python - <<'PY'
+          import os, sys
+          from datetime import UTC, datetime
+          from pathlib import Path
+          sys.path.insert(0,str(Path("scripts").resolve()))
+          import provider_ultra_production_qualification_v4 as q
+          report=q.persist_report(
+              os.environ["QUALIFICATION_V4_REPORT_PATH"],
+              results=[],
+              created_at=datetime.now(UTC).isoformat(),
+          )
+          q.validate_report(report)
+          print("QUALIFICATION_V4_PARTIAL_EVIDENCE=READY")
+          PY
+
+      - name: Run production qualification v4
+        id: qualification
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -u
+          if [ -z "${NVIDIA_API_KEY:-}" ]; then
+            echo "NVIDIA_API_KEY is not configured for model-evaluation" >&2
+            echo "exit_code=2" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          set +e
+          python scripts/provider_ultra_production_qualification_v4.py
+          code=$?
+          set -e
+          echo "exit_code=${code}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Validate immutable v4 report
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          path=Path(os.environ["QUALIFICATION_V4_REPORT_PATH"])
+          if not path.is_file():
+              raise SystemExit("qualification v4 report missing")
+          report=json.loads(path.read_text())
+          sys.path.insert(0,str(Path("scripts").resolve()))
+          import provider_ultra_production_qualification_v4 as q
+          q.validate_report(report,expected_sha=os.environ["GITHUB_SHA"])
+          print(
+              f"QUALIFICATION_V4_REPORT=PASS observed={report['summary']['observed']} "
+              f"quality_pass_rate={report['summary']['quality_pass_rate']} "
+              f"p95={report['summary']['p95_total_seconds']}"
+          )
+          PY
+
+      - name: Upload immutable v4 report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: provider-ultra-production-qualification-v4-${{ github.sha }}
+          path: provider-ultra-production-qualification-v4/report.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Adjudicate v4 qualification gates
+        if: always()
+        shell: bash
+        env:
+          QUALIFICATION_EXIT_CODE: ${{ steps.qualification.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          test "${QUALIFICATION_EXIT_CODE:-missing}" = "0"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          report=json.loads(Path(os.environ["QUALIFICATION_V4_REPORT_PATH"]).read_text())
+          s=report["summary"]
+          gates={
+              "complete": report["complete"] is True,
+              "observed": s["observed"] == 20,
+              "completed": s["completed"] == 20,
+              "errors": s["errors"] == 0,
+              "quality_gate_pass": s["quality_gate_pass"] is True,
+              "latency_gate_pass": s["latency_gate_pass"] is True,
+          }
+          failed=[k for k,v in gates.items() if not v]
+          if failed:
+              raise SystemExit(f"qualification v4 gates failed: {failed}")
+          print("PROVIDER_ULTRA_PRODUCTION_QUALIFICATION_V4=PASS")
+          print("PRODUCTION_CHANGE=NO")
+          print("PROMOTION=NOT_AUTHORIZED")
+          PY
