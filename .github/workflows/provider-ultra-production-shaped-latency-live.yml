@@ -66,7 +66,7 @@ jobs:
           sys.path.insert(0, str(Path('scripts').resolve()))
           import provider_ultra_production_shaped_latency as probe
 
-          system = probe.load_system_instructions('streamlit_app.py')
+          system = probe.load_system_instructions()
           assert probe.EXPERIMENT_NAME == 'provider_ultra_production_shaped_latency'
           assert probe.EXPERIMENT_SPEC_VERSION == '2026-10-01.1'
           assert probe.MODEL == 'nvidia/nemotron-3-ultra-550b-a55b'
