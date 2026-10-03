@@ -7,6 +7,17 @@ on:
         description: Exact protected main SHA to certify
         required: true
         type: string
+  push:
+    branches: [main]
+    paths:
+      - "streamlit_app.py"
+      - "Dockerfile"
+      - "requirements.lock"
+      - "ops/chatbot-runtime-deploy-contract.json"
+      - "ops/deploy_chatbot_runtime.sh"
+      - "tests/test_runtime_production_contract.py"
+      - "tests/test_runtime_deploy_contract.py"
+      - ".github/workflows/runtime-release-candidate.yml"
 
 permissions:
   contents: read
@@ -20,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      EXPECTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_sha || github.sha }}
       IMAGE_NAME: jadel-chatbot-runtime
 
     steps:
@@ -36,7 +47,7 @@ jobs:
       - name: Checkout immutable revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_sha || github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
