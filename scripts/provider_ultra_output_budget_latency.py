@@ -48,7 +48,9 @@ QUALITY_EVALUATION = False
 SENSITIVE_PAYLOADS_RECORDED = False
 
 
-def load_system_instructions(path: str | Path = "streamlit_app.py") -> str:
+def load_system_instructions(
+    path: str | Path = "evidence/provider-ultra-system-instructions-v1.json",
+) -> str:
     return baseline.load_system_instructions(path)
 
 
