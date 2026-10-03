@@ -89,11 +89,21 @@ jobs:
           echo RELEASE_HEALTH=FAIL >&2
           exit 20
 
-      - name: Generate release evidence
+      - name: Export immutable image payload
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release-evidence
+          docker save -o release-evidence/chatbot-runtime.tar "$IMAGE_NAME:$EXPECTED_SHA"
+          test -s release-evidence/chatbot-runtime.tar
+          tar_sha="$(sha256sum release-evidence/chatbot-runtime.tar | awk '{print $1}')"
+          echo "IMAGE_TAR_SHA256=$tar_sha" >> "$GITHUB_ENV"
+          echo "RELEASE_IMAGE_EXPORT=PASS"
+
+      - name: Generate release evidence
+        shell: bash
+        run: |
+          set -euo pipefail
           python - <<'PY'
           import hashlib, json, os
           from pathlib import Path
@@ -123,6 +133,7 @@ jobs:
               "schema_version":"1.0",
               "source_sha":os.environ["EXPECTED_SHA"],
               "image_id":os.environ["IMAGE_ID"],
+              "image_tar_sha256":os.environ["IMAGE_TAR_SHA256"],
               "requirements_lock_sha256":lock_sha,
               "provider":"openai",
               "model":"gpt-5.6-luna",
@@ -137,7 +148,11 @@ jobs:
           )
           PY
           cp requirements.lock release-evidence/requirements.lock
-          sha256sum release-evidence/* > release-evidence/SHA256SUMS
+          (
+            cd release-evidence
+            sha256sum chatbot-runtime.tar requirements.lock release.json sbom.cdx.json > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
           echo RELEASE_EVIDENCE=PASS
 
       - name: Upload immutable release evidence

@@ -1,0 +1,252 @@
+name: Chatbot production deployment
+
+on:
+  workflow_run:
+    workflows:
+      - "Chatbot runtime release candidate"
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: chatbot-production-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' }}
+    environment: chatbot-production-deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
+      RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
+      RELEASE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      DEPLOY_HOST: ${{ vars.VPS_CHATBOT_HOST }}
+      DEPLOY_IP: ${{ vars.VPS_CHATBOT_TAILSCALE_IP }}
+      DEPLOY_USER: ${{ vars.VPS_CHATBOT_DEPLOY_USER }}
+      EXPECTED_DEPLOY_KEY_FINGERPRINT: ${{ vars.VPS_CHATBOT_DEPLOY_SSH_KEY_FINGERPRINT }}
+      CONTAINER_NAME: jadel-chatbot-production
+      HOST_BIND_PORT: "18501"
+
+    steps:
+      - name: Fail-closed deployment preflight
+        shell: bash
+        env:
+          TS_DEPLOYER_OAUTH_ID: ${{ secrets.TS_DEPLOYER_OAUTH_ID }}
+          TS_DEPLOYER_AUDIENCE: ${{ secrets.TS_DEPLOYER_AUDIENCE }}
+          DEPLOY_KEY: ${{ secrets.VPS_CHATBOT_DEPLOY_SSH_KEY }}
+          DEPLOY_KEY_PASSPHRASE: ${{ secrets.VPS_CHATBOT_DEPLOY_SSH_PASSPHRASE }}
+          DEPLOY_HOST_KEY: ${{ secrets.VPS_CHATBOT_SSH_HOST_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$RELEASE_RUN_ATTEMPT" = "1"
+          test -n "$TS_DEPLOYER_OAUTH_ID"
+          test -n "$TS_DEPLOYER_AUDIENCE"
+          test -n "$DEPLOY_KEY"
+          test -n "$DEPLOY_KEY_PASSPHRASE"
+          test -n "$DEPLOY_HOST_KEY"
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_IP"
+          [[ "$DEPLOY_IP" =~ ^100\. ]]
+          test -n "$DEPLOY_USER"
+          case "$DEPLOY_USER" in root|ubuntu) echo "refusing privileged deploy user" >&2; exit 2;; esac
+          test -n "$EXPECTED_DEPLOY_KEY_FINGERPRINT"
+          [[ "$EXPECTED_DEPLOY_KEY_FINGERPRINT" == SHA256:* ]]
+
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/deploy_key"
+          chmod 600 "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' '#!/bin/sh' 'exec printf '\''%s\n'\'' "$DEPLOY_KEY_PASSPHRASE"' > "$RUNNER_TEMP/ssh-askpass"
+          chmod 700 "$RUNNER_TEMP/ssh-askpass"
+          printf '%s\n' "$DEPLOY_HOST_KEY" > "$RUNNER_TEMP/known_hosts"
+          chmod 600 "$RUNNER_TEMP/known_hosts"
+
+          export SSH_ASKPASS="$RUNNER_TEMP/ssh-askpass"
+          export SSH_ASKPASS_REQUIRE=force
+          export DISPLAY=:0
+          eval "$(ssh-agent -s)" >/dev/null
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+          timeout --signal=TERM --kill-after=5s 15s setsid ssh-add "$RUNNER_TEMP/deploy_key" </dev/null
+          ssh-add -L > "$RUNNER_TEMP/deploy_key.pub"
+          actual_fp="$(ssh-keygen -lf "$RUNNER_TEMP/deploy_key.pub" -E sha256 | awk '{print $2}')"
+          test "$actual_fp" = "$EXPECTED_DEPLOY_KEY_FINGERPRINT"
+          rm -f "$RUNNER_TEMP/deploy_key.pub"
+          echo CHATBOT_DEPLOY_CREDENTIAL_PREFLIGHT=PASS
+
+      - name: Checkout immutable released revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify one-shot protected-main lineage
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags https://github.com/$GITHUB_REPOSITORY.git +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git rev-parse refs/remotes/origin/main)" = "$EXPECTED_SHA"
+          test "$(git status --porcelain)" = ""
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path("ops/chatbot-production-deploy-authorization.json").read_text())
+          assert data["schema_version"] == "1.0"
+          assert data["authorized"] is True
+          assert data["authorized_base_sha"] == "06ce2c7797b656e24601c81272933d727ef9d907"
+          assert data["release_workflow"] == "Chatbot runtime release candidate"
+          assert data["deploy_workflow"] == "Chatbot production deployment"
+          assert data["run_once"] is True
+          assert data["runtime_provider"] == "openai"
+          assert data["runtime_model"] == "gpt-5.6-luna"
+          assert data["host_bind_address"] == "127.0.0.1"
+          assert data["host_bind_port"] == 18501
+          assert data["public_exposure_mutation"] is False
+          assert data["financial_execution"] is False
+          assert data["external_action_authority"] is False
+          assert data["rollback_required"] is True
+          assert data["tailscale_only_deployer"] is True
+          PY
+
+          first_parent="$(git rev-parse "$EXPECTED_SHA^1")"
+          test "$first_parent" = "06ce2c7797b656e24601c81272933d727ef9d907"
+          python tests/test_runtime_production_contract.py
+          python tests/test_runtime_deploy_contract.py
+          python tests/test_runtime_production_deploy_workflow.py
+          echo CHATBOT_DEPLOY_LINEAGE=PASS
+
+      - name: Download and verify certified release artifact
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          API=https://api.github.com
+          artifact_name="chatbot-runtime-release-$EXPECTED_SHA"
+          meta="$RUNNER_TEMP/artifacts.json"
+          curl -fsSL             -H "Authorization: Bearer $GH_TOKEN"             -H "Accept: application/vnd.github+json"             "$API/repos/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID/artifacts?per_page=100" > "$meta"
+
+          count="$(jq --arg n "$artifact_name" '[.artifacts[] | select(.name==$n and .expired==false)] | length' "$meta")"
+          test "$count" = "1"
+          artifact_id="$(jq -r --arg n "$artifact_name" '.artifacts[] | select(.name==$n and .expired==false) | .id' "$meta")"
+          artifact_digest="$(jq -r --arg n "$artifact_name" '.artifacts[] | select(.name==$n and .expired==false) | .digest' "$meta")"
+          [[ "$artifact_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+          mkdir -p "$RUNNER_TEMP/release"
+          curl -fL             -H "Authorization: Bearer $GH_TOKEN"             -H "Accept: application/vnd.github+json"             "$API/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip"             -o "$RUNNER_TEMP/release.zip"
+          unzip -q "$RUNNER_TEMP/release.zip" -d "$RUNNER_TEMP/release"
+
+          release_root="$RUNNER_TEMP/release"
+          if [ ! -f "$release_root/SHA256SUMS" ] && [ -f "$release_root/release-evidence/SHA256SUMS" ]; then
+            release_root="$release_root/release-evidence"
+          fi
+          test -f "$release_root/SHA256SUMS"
+          test -f "$release_root/release.json"
+          test -s "$release_root/chatbot-runtime.tar"
+          (
+            cd "$release_root"
+            sha256sum -c SHA256SUMS
+          )
+
+          test "$(jq -r '.source_sha' "$release_root/release.json")" = "$EXPECTED_SHA"
+          test "$(jq -r '.provider' "$release_root/release.json")" = "openai"
+          test "$(jq -r '.model' "$release_root/release.json")" = "gpt-5.6-luna"
+          test "$(jq -r '.production_bind_contract' "$release_root/release.json")" = "127.0.0.1:18501"
+          test "$(jq -r '.public_exposure_mutation' "$release_root/release.json")" = "false"
+          test "$(jq -r '.financial_execution' "$release_root/release.json")" = "false"
+          test "$(jq -r '.external_action_authority' "$release_root/release.json")" = "false"
+
+          tar_sha="$(jq -r '.image_tar_sha256' "$release_root/release.json")"
+          image_id="$(jq -r '.image_id' "$release_root/release.json")"
+          [[ "$tar_sha" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$(sha256sum "$release_root/chatbot-runtime.tar" | awk '{print $1}')" = "$tar_sha"
+
+          echo "release_root=$release_root" >> "$GITHUB_OUTPUT"
+          echo "tar_sha=$tar_sha" >> "$GITHUB_OUTPUT"
+          echo "image_id=$image_id" >> "$GITHUB_OUTPUT"
+          echo "artifact_id=$artifact_id" >> "$GITHUB_OUTPUT"
+          echo "artifact_digest=$artifact_digest" >> "$GITHUB_OUTPUT"
+          echo CHATBOT_CERTIFIED_RELEASE=PASS
+
+      - name: Join private tailnet as deployer
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888
+        with:
+          oauth-client-id: ${{ secrets.TS_DEPLOYER_OAUTH_ID }}
+          audience: ${{ secrets.TS_DEPLOYER_AUDIENCE }}
+          tags: tag:github-deployer
+          ping: ${{ env.DEPLOY_HOST }}
+
+      - name: Verify VPS reachability and remote prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          tailscale ping --timeout=15s "$DEPLOY_HOST"
+          SSH=(ssh -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityFile="$RUNNER_TEMP/deploy_key" -o IdentityAgent="$SSH_AUTH_SOCK" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts")
+          "${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" '
+            set -euo pipefail
+            command -v docker >/dev/null
+            docker info >/dev/null
+            test -f "$HOME/.config/jadel-chatbot/runtime.env"
+            test "$(stat -c "%a" "$HOME/.config/jadel-chatbot/runtime.env")" = "600"
+            grep -Eq "^OPENAI_API_KEY=.+$" "$HOME/.config/jadel-chatbot/runtime.env"
+          '
+          echo CHATBOT_REMOTE_PREFLIGHT=PASS
+
+      - name: Upload certified payload over Tailscale SSH
+        shell: bash
+        env:
+          RELEASE_ROOT: ${{ steps.release.outputs.release_root }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityFile="$RUNNER_TEMP/deploy_key" -o IdentityAgent="$SSH_AUTH_SOCK" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts")
+          SCP=(scp -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityFile="$RUNNER_TEMP/deploy_key" -o IdentityAgent="$SSH_AUTH_SOCK" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts")
+          remote_dir="chatbot-incoming/$EXPECTED_SHA"
+          "${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p ~/$remote_dir"
+          "${SCP[@]}"             "$RELEASE_ROOT/chatbot-runtime.tar"             "$RELEASE_ROOT/release.json"             "$RELEASE_ROOT/SHA256SUMS"             "ops/deploy_chatbot_runtime.sh"             "$DEPLOY_USER@$DEPLOY_HOST:~/$remote_dir/"
+          echo CHATBOT_PAYLOAD_UPLOAD=PASS
+
+      - name: Deploy certified image with rollback
+        shell: bash
+        env:
+          EXPECTED_TAR_SHA: ${{ steps.release.outputs.tar_sha }}
+          EXPECTED_IMAGE_ID: ${{ steps.release.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityFile="$RUNNER_TEMP/deploy_key" -o IdentityAgent="$SSH_AUTH_SOCK" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts")
+          "${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST"             "EXPECTED_SHA='$EXPECTED_SHA' EXPECTED_TAR_SHA='$EXPECTED_TAR_SHA' EXPECTED_IMAGE_ID='$EXPECTED_IMAGE_ID' CONTAINER_NAME='$CONTAINER_NAME' HOST_BIND_PORT='$HOST_BIND_PORT' bash ~/chatbot-incoming/$EXPECTED_SHA/deploy_chatbot_runtime.sh"
+
+      - name: Verify deployed runtime identity
+        shell: bash
+        env:
+          EXPECTED_IMAGE_ID: ${{ steps.release.outputs.image_id }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityFile="$RUNNER_TEMP/deploy_key" -o IdentityAgent="$SSH_AUTH_SOCK" -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts")
+          "${SSH[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "
+            set -euo pipefail
+            test \"\$(docker container inspect '$CONTAINER_NAME' --format '{{.Image}}')\" = '$EXPECTED_IMAGE_ID'
+            test \"\$(docker container inspect '$CONTAINER_NAME' --format '{{ index .Config.Labels \"jadel.source_sha\" }}')\" = '$EXPECTED_SHA'
+            test \"\$(docker port '$CONTAINER_NAME' 8501/tcp)\" = '127.0.0.1:$HOST_BIND_PORT'
+            curl -fsS --max-time 5 'http://127.0.0.1:$HOST_BIND_PORT/_stcore/health' >/dev/null
+          "
+          echo CHATBOT_PRODUCTION_DEPLOYMENT=PASS
+          echo "SOURCE_SHA=$EXPECTED_SHA"
+          echo "IMAGE_ID=$EXPECTED_IMAGE_ID"
+          echo "BIND=127.0.0.1:$HOST_BIND_PORT"
+          echo PUBLIC_EXPOSURE_MUTATION=NO
+          echo FINANCIAL_EXECUTION=NO
+
+      - name: Cleanup ephemeral SSH material
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${SSH_AGENT_PID:-}" ]; then ssh-agent -k >/dev/null 2>&1 || true; fi
+          rm -f "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/deploy_key.pub" "$RUNNER_TEMP/ssh-askpass" "$RUNNER_TEMP/known_hosts"

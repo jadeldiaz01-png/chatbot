@@ -49,3 +49,10 @@ def test_release_workflow_requires_exact_sha_and_no_production_mutation() -> Non
     assert "secrets." not in text
     assert "ssh " not in text
     assert "sudo " not in text
+
+
+if __name__ == "__main__":
+    test_deploy_contract_is_fail_closed()
+    test_remote_installer_requires_local_bind_and_rollback()
+    test_release_workflow_requires_exact_sha_and_no_production_mutation()
+    print("RUNTIME_DEPLOY_CONTRACT_TESTS=PASS")
