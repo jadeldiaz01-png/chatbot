@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 90
     environment: model-evaluation
     env:
-      EXPECTED_BEFORE_SHA: 59f27b12776ddb38fba223a9164321d32c8acc2d
+      EXPECTED_BEFORE_SHA: cb4317d7c2da0fcc2a4bddfd696c88b3444b2fa5
       OUTPUT_DIR: provider-ultra-production-qualification
       QUALIFICATION_REPORT_PATH: provider-ultra-production-qualification/report.json
 
@@ -72,14 +72,18 @@ jobs:
               .read_text(encoding="utf-8")
           )
           assert data["authorized"] is True
-          assert data["authorized_base_sha"] == "59f27b12776ddb38fba223a9164321d32c8acc2d"
+          assert data["authorized_base_sha"] == "cb4317d7c2da0fcc2a4bddfd696c88b3444b2fa5"
           assert data["experiment"] == "provider_ultra_production_qualification"
+          assert data["experiment_spec_version"] == "2026-10-03.2"
           assert data["max_tokens"] == 128
           assert data["planned_calls"] == 20
           assert data["run_once"] is True
           assert data["production_change"] is False
           assert data["promotion_authorized"] is False
           assert data["rerun_authorized"] is False
+          assert data["supersedes_failed_run_id"] == 37091343239
+          assert data["supersedes_failed_artifact_digest"] == "sha256:4d457f48094c9a2a295cd2ccf6c73fe6b7621d1ec4d35314de6784f3704b8e77"
+          assert data["change_reason"] == "semantic_evaluator_v2"
           print("QUALIFICATION_AUTHORIZATION=PASS")
           PY
 
