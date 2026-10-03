@@ -41,6 +41,15 @@ class ProductionQualificationV3Tests(unittest.TestCase):
         self.assertEqual(old_request["messages"][1], new_request["messages"][1])
         self.assertNotEqual(old_request["messages"][0], new_request["messages"][0])
 
+    def test_unexpected_model_identity_is_rejected(self) -> None:
+        self.assertTrue(
+            MODULE.expected_model_identity(MODULE.baseline.MODEL)
+        )
+        self.assertFalse(
+            MODULE.expected_model_identity("nvidia/another-model")
+        )
+        self.assertFalse(MODULE.expected_model_identity(None))
+
     def test_same_prompt_corpus_and_transport_contract(self) -> None:
         self.assertEqual(MODULE.TOTAL_PLANNED_CALLS, 20)
         self.assertEqual(MODULE.REPETITIONS_PER_PROMPT, 4)
