@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "authorized": true,
+  "authorized_base_sha": "59f27b12776ddb38fba223a9164321d32c8acc2d",
+  "experiment": "provider_ultra_production_qualification",
+  "max_tokens": 128,
+  "planned_calls": 20,
+  "run_once": true,
+  "production_change": false,
+  "promotion_authorized": false,
+  "rerun_authorized": false
+}
