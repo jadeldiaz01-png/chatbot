@@ -51,6 +51,12 @@ jobs:
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
           test "$(git status --porcelain)" = ""
 
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
       - name: Validate authorization marker and frozen contract
         shell: bash
         run: |
@@ -76,12 +82,6 @@ jobs:
           assert data["rerun_authorized"] is False
           print("QUALIFICATION_AUTHORIZATION=PASS")
           PY
-
-      - name: Install frozen runtime dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
 
       - name: Initialize partial evidence envelope
         shell: bash
