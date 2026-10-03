@@ -1,0 +1,87 @@
+name: provider-ultra-production-qualification-v4-ci
+
+on:
+  pull_request:
+    paths:
+      - "evidence/provider-ultra-system-instructions-v4.txt"
+      - "evidence/provider-ultra-production-qualification-v4-authorization.json"
+      - "scripts/provider_ultra_production_qualification_v4.py"
+      - "tests/test_provider_ultra_production_qualification_v4.py"
+      - ".github/workflows/provider-ultra-production-qualification-v4-ci.yml"
+      - ".github/workflows/provider-ultra-production-qualification-v4-live.yml"
+      - "scripts/provider_ultra_production_qualification.py"
+      - "scripts/provider_ultra_production_qualification_v3.py"
+      - "scripts/provider_ultra_production_shaped_latency.py"
+      - "requirements.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  qualification-v4-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout immutable PR revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Install frozen runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --no-cache-dir --only-binary=:all: --require-hashes -r requirements.lock
+
+      - name: Validate semantic evaluator and v4 contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_provider_ultra_production_qualification.py
+          python tests/test_provider_ultra_production_qualification_v4.py
+
+      - name: Validate one-shot v4 authorization marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path("evidence/provider-ultra-production-qualification-v4-authorization.json").read_text())
+          assert data["authorized"] is True
+          assert data["authorized_base_sha"] == "263b75bbafae5cd1d7c58eeed92e59d85b5a79d3"
+          assert data["experiment"] == "provider_ultra_production_qualification_v4"
+          assert data["experiment_spec_version"] == "2026-10-03.4"
+          assert data["candidate_system_instructions_sha256"] == "34af3736681d32e9cf367de1b7f2b7e62e8b0f859d11c0bc2a57a132e87f8883"
+          assert data["max_tokens"] == 128
+          assert data["planned_calls"] == 20
+          assert data["run_once"] is True
+          assert data["production_change"] is False
+          assert data["promotion_authorized"] is False
+          assert data["rerun_authorized"] is False
+          assert data["supersedes_failed_run_id"] == 37093194127
+          assert data["supersedes_failed_artifact_digest"] == "sha256:b17d0d0819feb936fc207b3a9ff7c2e98196049a260ad64bf71d27364fc1050f"
+          print("QUALIFICATION_V4_AUTHORIZATION_MARKER=PASS")
+          PY
+
+      - name: Prove live workflow remains fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          text=Path(".github/workflows/provider-ultra-production-qualification-v4-live.yml").read_text()
+          required=(
+              "github.event.before",
+              "263b75bbafae5cd1d7c58eeed92e59d85b5a79d3",
+              "GITHUB_RUN_ATTEMPT",
+              "NVIDIA_API_KEY",
+              "RERUN=NOT_AUTHORIZED",
+              "PRODUCTION_CHANGE=NO",
+              "PROMOTION=NOT_AUTHORIZED",
+          )
+          missing=[x for x in required if x not in text]
+          if missing:
+              raise SystemExit(f"missing fail-closed tokens: {missing}")
+          print("QUALIFICATION_V4_LIVE_FAIL_CLOSED_CONTRACT=PASS")
+          PY
