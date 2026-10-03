@@ -152,6 +152,8 @@ def detect_sensitive_input(text: str) -> tuple[SensitiveFinding, ...]:
 def validate_messages_for_provider(messages: Iterable[dict[str, str]]) -> None:
     categories: set[str] = set()
     for message in messages:
+        if message.get("role") != "user":
+            continue
         content = message.get("content", "")
         if not isinstance(content, str):
             continue
