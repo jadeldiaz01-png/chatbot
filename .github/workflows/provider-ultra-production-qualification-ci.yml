@@ -58,14 +58,18 @@ jobs:
           assert data == {
               "schema_version": "1.0",
               "authorized": True,
-              "authorized_base_sha": "59f27b12776ddb38fba223a9164321d32c8acc2d",
+              "authorized_base_sha": "cb4317d7c2da0fcc2a4bddfd696c88b3444b2fa5",
               "experiment": "provider_ultra_production_qualification",
+              "experiment_spec_version": "2026-10-03.2",
               "max_tokens": 128,
               "planned_calls": 20,
               "run_once": True,
               "production_change": False,
               "promotion_authorized": False,
               "rerun_authorized": False,
+              "supersedes_failed_run_id": 37091343239,
+              "supersedes_failed_artifact_digest": "sha256:4d457f48094c9a2a295cd2ccf6c73fe6b7621d1ec4d35314de6784f3704b8e77",
+              "change_reason": "semantic_evaluator_v2",
           }
           print("QUALIFICATION_AUTHORIZATION_MARKER=PASS")
           PY
@@ -82,7 +86,7 @@ jobs:
           ).read_text(encoding="utf-8")
           required = (
               'github.event.before',
-              '59f27b12776ddb38fba223a9164321d32c8acc2d',
+              'cb4317d7c2da0fcc2a4bddfd696c88b3444b2fa5',
               'NVIDIA_API_KEY',
               'PRODUCTION_CHANGE=NO',
               'PROMOTION=NOT_AUTHORIZED',
