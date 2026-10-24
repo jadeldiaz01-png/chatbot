@@ -1,0 +1,38 @@
+name: Trusted automated risk gate
+
+# SECURITY: pull_request_target always executes policy from protected main.
+# Never check out, import, or execute code from the untrusted PR in this job.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: trusted-risk-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  automated-risk-trusted:
+    name: automated-risk-trusted
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Checkout trusted default-branch policy only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Validate trusted policy regression tests
+        run: python3 -m unittest discover -s tests -p 'test_automated_risk_gate.py' -v
+      - name: Inspect PR file metadata using read-only GitHub API
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_REPOSITORY: ${{ github.repository }}
+          GH_READ_TOKEN: ${{ github.token }}
+          RISK_APPROVED_SHA: ${{ vars.RISK_APPROVED_SHA }}
+        run: python3 scripts/automated_risk_gate.py
