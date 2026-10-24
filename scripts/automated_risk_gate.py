@@ -39,7 +39,9 @@ ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
 
 
 def classify_path(path):
-    value = path.replace("\\", "/").lower().lstrip("./")
+    value = path.replace("\\", "/").lower()
+    while value.startswith("./"):
+        value = value[2:]
     filename = value.rsplit("/", 1)[-1]
     if not value or value.startswith("../"):
         raise ValueError("Invalid changed path")
@@ -107,7 +109,7 @@ def main():
                 "## Automated PR risk gate\n"
                 f"- Risk: **{result['risk']}**\n"
                 f"- Decision: **{result['decision']}**\n"
-                f"- PR HEAD: \`{result['head_sha']}\`\n"
+                f"- PR HEAD: `{result['head_sha']}`\n"
                 "- Production and financial execution: **not authorized**\n"
             )
     return 0 if result["decision"] == "PASS" else 2
