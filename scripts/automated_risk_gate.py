@@ -10,6 +10,8 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 
 SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 HIGH_TERMS = re.compile(
@@ -92,13 +94,67 @@ def git_changed_paths(base_sha, head_sha):
     return [part.decode("utf-8") for part in completed.stdout.split(b"\0") if part]
 
 
+
+def github_api_json(url, token):
+    """Read GitHub metadata only; never execute code from an untrusted PR."""
+    if not token or not url.startswith("https://api.github.com/repos/"):
+        raise ValueError("GitHub read token or API URL missing")
+    request = urllib.request.Request(
+        url, headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": "Bearer " + token,
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "jadel-trusted-risk-gate",
+        }
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.load(response)
+
+
+def trusted_pr_paths(repository, number, expected_head, token):
+    """Inspect PR filenames with a trusted default-branch runner and read-only API."""
+    if not re.fullmatch(r"[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+", repository):
+        raise ValueError("Invalid repository")
+    if not str(number).isdigit() or int(number) < 1:
+        raise ValueError("Invalid PR number")
+    if not SHA.fullmatch(expected_head):
+        raise ValueError("Invalid event PR HEAD")
+    endpoint = f"https://api.github.com/repos/{repository}/pulls/{number}"
+    before = github_api_json(endpoint, token)
+    if before["head"]["sha"].lower() != expected_head.lower():
+        raise ValueError("PR HEAD changed since the event")
+    paths = []
+    for page in range(1, 32):
+        batch = github_api_json(f"{endpoint}/files?per_page=100&page={page}", token)
+        if not isinstance(batch, list):
+            raise ValueError("GitHub file API did not return a list")
+        for item in batch:
+            paths.append(item["filename"])
+            if item.get("previous_filename"):
+                paths.append(item["previous_filename"])
+        if len(batch) < 100:
+            break
+    if len(paths) >= 3000:
+        raise ValueError("PR has too many changed paths to certify")
+    after = github_api_json(endpoint, token)
+    if after["head"]["sha"].lower() != expected_head.lower():
+        raise ValueError("PR HEAD changed during risk verification")
+    return paths
+
+
 def main():
     try:
-        base = os.environ["PR_BASE_SHA"]
         head = os.environ["PR_HEAD_SHA"]
-        files = git_changed_paths(base, head)
+        if os.environ.get("GITHUB_EVENT_NAME") == "pull_request_target":
+            files = trusted_pr_paths(
+                os.environ["GH_REPOSITORY"], os.environ["PR_NUMBER"],
+                head, os.environ["GH_READ_TOKEN"],
+            )
+        else:
+            base = os.environ["PR_BASE_SHA"]
+            files = git_changed_paths(base, head)
         result = evaluate(files, head, os.environ.get("RISK_APPROVED_SHA", ""))
-    except (KeyError, ValueError, OSError, subprocess.CalledProcessError, UnicodeError) as exc:
+    except (KeyError, ValueError, OSError, subprocess.CalledProcessError, UnicodeError, urllib.error.URLError) as exc:
         print(f"AUTOMATED_RISK_GATE=FAIL_CLOSED: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(result, sort_keys=True, indent=2))
