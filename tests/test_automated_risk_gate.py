@@ -55,5 +55,28 @@ class AutomatedRiskGateTests(unittest.TestCase):
             gate.evaluate(["README.md"], "main")
 
 
+    def test_trusted_api_checks_original_renamed_path(self):
+        from unittest.mock import patch
+        replies = [
+            {"head": {"sha": HEAD}},
+            [{"filename": "docs/harmless.md", "previous_filename": ".github/workflows/deploy.yml"}],
+            {"head": {"sha": HEAD}},
+        ]
+        with patch.object(gate, "github_api_json", side_effect=replies):
+            paths = gate.trusted_pr_paths("owner/repo", "4", HEAD, "read-token")
+        self.assertEqual(gate.evaluate(paths, HEAD)["risk"], "HIGH")
+
+    def test_trusted_api_rejects_pr_head_change(self):
+        from unittest.mock import patch
+        with patch.object(gate, "github_api_json", return_value={"head": {"sha": OTHER}}):
+            with self.assertRaisesRegex(ValueError, "changed"):
+                gate.trusted_pr_paths("owner/repo", "4", HEAD, "read-token")
+
+    def test_trusted_api_rejects_invalid_repository(self):
+        with self.assertRaisesRegex(ValueError, "Invalid repository"):
+            gate.trusted_pr_paths("../repo", "4", HEAD, "read-token")
+
+
+
 if __name__ == "__main__":
     unittest.main()
