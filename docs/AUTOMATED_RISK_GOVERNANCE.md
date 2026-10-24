@@ -1,15 +1,55 @@
-# Automated risk validation — no compulsory independent reviewer
+# Risk-tiered validation for Codex PRs
 
-The proposed CI gate classifies each PR as **LOW**, **MEDIUM**, or **HIGH** based on its changed paths. LOW and MEDIUM can pass automatically alongside existing CI tests. HIGH covers workflows, security, deployment, payments, trading execution, licensing, migrations, permissions, and dependency locks.
+The independent technical reviewer is **optional** for ordinary changes. This
+proposal maintains automatic tests and uses an independent, trusted CI *check*
+instead of requiring another *person* on every PR.
 
-For HIGH, the repository owner must authorize the **exact 40-character PR HEAD SHA** through the GitHub Actions repository variable `RISK_APPROVED_SHA` (Settings → Secrets and variables → Actions → Variables). After reviewing the exact commit and changing the variable, rerun the failed `automated-risk` check. Clear or replace the variable after the decision. Any commit change invalidates the approval.
+## Classification and effects
+- **LOW:** documentation and ordinary prose; automated validation plus existing CI.
+- **MEDIUM:** ordinary code; automated validation plus existing CI.
+- **HIGH:** workflows, security/policy changes, dependencies, licensing,
+  financial execution, production deployments, credentials, migrations, etc.
+  Requires an explicit authorization matching the exact PR HEAD SHA.
+- None of these statuses grants trading LIVE, PayPal LIVE, production deployment,
+  real-money execution, spending, external effects or permission to use data.
+  Those operations still require their separate manual approval.
 
-This is a GitHub merge-quality gate only. **It does not authorize production deploys, real money, trading LIVE, PayPal LIVE, external writes, paid services, or data use without permission.** Such operations retain their distinct manual approvals and existing fail-closed controls.
+## Trusted enforcement, NOT self-approval
+`.github/workflows/automated-risk.yml` tests the PR version and provides
+advisory feedback. PR code can edit that version, so **DO NOT** use its
+`automated-risk` status as the sole required branch-protection check.
 
-The workflow has read-only permissions, no credentials, no external dependencies, no self-hosted runner, a four-minute timeout, and reproducible unit tests. It runs on PRs, not automatically on production deployments.
+`.github/workflows/automated-risk-trusted.yml` runs on
+`pull_request_target`, checks out **only the protected default branch**, and
+examines untrusted PR file metadata through GitHub's read-only API. It never
+checks out or executes PR code. It fails closed on API errors, HEAD races, huge
+change sets and missing exact-SHA approval.
 
-## Enforcement prerequisite
+The **required** ruleset status context must be `automated-risk-trusted`
+(after this code is merged to the protected branch). Keep all existing build,
+security and regression checks required as well.
 
-A workflow alone is **not an enforced required status check**. Once this PR passes its tests, add `automated-risk` as a **required status check** in the protected main-branch ruleset, alongside every existing CI check. Only after confirming this enforcement should an administrator reduce **required approving reviews** to 0 and disable mandatory CODEOWNERS reviews where appropriate. Keep PR-only changes, conversation resolution, no force pushes, deletion restrictions, and required build/security tests. On GitHub Free private repos, check whether these settings are available; do not assume enforcement.
+## High-risk authorization (repository owner)
+Inspect a HIGH-risk PR's actual changes, tests and full 40-character HEAD SHA.
+In Settings → Secrets and variables → Actions → Variables, set the repository
+variable `RISK_APPROVED_SHA` to that SHA. Rerun the failed risk check (or
+synchronize the PR); **any subsequent commit invalidates that authorization**.
+Clear or replace the variable after the decision. The variable is not a
+license for the workflow to deploy or spend.
 
-The independent reviewer is optional for LOW/MEDIUM; HIGH requires approval by the repository owner against the exact SHA, not necessarily a second reviewer.
+## Two-stage safe rollout
+1. This initial draft PR can only use existing branch checks and the untrusted
+   PR-version self-test. The trusted workflow does **not** run on this PR until
+   the code is installed on the default branch. Retain current protection and
+   human approval for this bootstrap.
+2. After verifying and merging the bootstrap under the existing rules, confirm
+   `automated-risk-trusted` runs and add it to **required status checks**.
+3. Only after that, where plan and policy permit, set generic required PR
+   approval count to 0 and disable mandatory CODEOWNERS reviews. Retain
+   PR-only merges, security checks, no force pushes, deletion restrictions and
+   required conversation resolution. Keep specific human gates for HIGH risk
+   and all critical production/financial actions.
+
+This uses read-only permissions and a GitHub-hosted runner with a short timeout,
+avoiding self-hosted infrastructure or paid services. Available GitHub Actions
+minutes and private-repository ruleset features still depend on the plan.
