@@ -1,0 +1,32 @@
+name: Automated risk validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: automated-risk-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  automated-risk:
+    name: automated-risk
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Checkout PR without persisted credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Self-test risk classification
+        run: python3 -m unittest discover -s tests -p 'test_automated_risk_gate.py' -v
+      - name: Classify PR and check exact-SHA owner authorization
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RISK_APPROVED_SHA: ${{ vars.RISK_APPROVED_SHA }}
+        run: python3 scripts/automated_risk_gate.py
