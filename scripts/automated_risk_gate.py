@@ -113,7 +113,8 @@ def github_api_json(url, token):
 
 def trusted_pr_paths(repository, number, expected_head, token):
     """Inspect PR filenames with a trusted default-branch runner and read-only API."""
-    if not re.fullmatch(r"[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+", repository):
+    if (not re.fullmatch(r"[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+", repository)
+            or any(segment in (".", "..") for segment in repository.split("/"))):
         raise ValueError("Invalid repository")
     if not str(number).isdigit() or int(number) < 1:
         raise ValueError("Invalid PR number")
